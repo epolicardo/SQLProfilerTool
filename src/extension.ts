@@ -11,6 +11,12 @@ export function activate(context: vscode.ExtensionContext) {
     Logger.initialize(context);
     Logger.info('SQL Server Profiler Tool extension is now active!');
 
+    // ⚠️ TEMPORAL WARNING
+    Logger.warn('=== TEMPORAL DEBUG MODE ENABLED ===');
+    Logger.warn('PASSWORDS WILL BE LOGGED TO CONSOLE');
+    Logger.warn('REMEMBER TO REMOVE THIS IN PRODUCTION');
+    Logger.warn('=======================================');
+
     // Initialize the profiler manager
     profilerManager = new SqlProfilerManager(context);
 
@@ -24,6 +30,102 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.window.showInformationMessage(
                 'SQL Profiler logs are now visible in the Output panel. You can also access them via View → Output → "SQL Server Profiler"'
             );
+        })
+    );
+
+    // Command to clear stored password for a specific connection
+    context.subscriptions.push(
+        vscode.commands.registerCommand('sqlProfiler.clearStoredPassword', async () => {
+            if (!profilerManager) {
+                vscode.window.showErrorMessage('SQL Profiler is not initialized');
+                return;
+            }
+
+            try {
+                // Get connections with stored passwords
+                const connectionsWithPasswords = await profilerManager.getConnectionsWithStoredPasswords();
+
+                if (connectionsWithPasswords.length === 0) {
+                    vscode.window.showInformationMessage('No stored passwords found for any connection profiles');
+                    return;
+                }
+
+                // Let user select which connection password to clear
+                const selectedConnection = await vscode.window.showQuickPick(
+                    connectionsWithPasswords.map(name => ({ label: name, value: name })),
+                    {
+                        placeHolder: 'Select connection to clear stored password',
+                        ignoreFocusOut: true
+                    }
+                );
+
+                if (selectedConnection) {
+                    await profilerManager.clearStoredPassword(selectedConnection.value);
+                    vscode.window.showInformationMessage(`Stored password cleared for connection: ${selectedConnection.value}`);
+                }
+            } catch (error: any) {
+                vscode.window.showErrorMessage(`Failed to clear stored password: ${error.message}`);
+            }
+        })
+    );
+
+    // Command to clear all stored passwords
+    context.subscriptions.push(
+        vscode.commands.registerCommand('sqlProfiler.clearAllStoredPasswords', async () => {
+            if (!profilerManager) {
+                vscode.window.showErrorMessage('SQL Profiler is not initialized');
+                return;
+            }
+
+            try {
+                const connectionsWithPasswords = await profilerManager.getConnectionsWithStoredPasswords();
+
+                if (connectionsWithPasswords.length === 0) {
+                    vscode.window.showInformationMessage('No stored passwords found');
+                    return;
+                }
+
+                // Confirm action
+                const confirmClear = await vscode.window.showWarningMessage(
+                    `Are you sure you want to clear stored passwords for ${connectionsWithPasswords.length} connection(s)?`,
+                    { modal: true },
+                    'Yes, Clear All',
+                    'Cancel'
+                );
+
+                if (confirmClear === 'Yes, Clear All') {
+                    await profilerManager.clearAllStoredPasswords();
+                    vscode.window.showInformationMessage(`Cleared stored passwords for ${connectionsWithPasswords.length} connection profiles`);
+                }
+            } catch (error: any) {
+                vscode.window.showErrorMessage(`Failed to clear stored passwords: ${error.message}`);
+            }
+        })
+    );
+
+    // Command to show connections with stored passwords
+    context.subscriptions.push(
+        vscode.commands.registerCommand('sqlProfiler.showStoredPasswords', async () => {
+            if (!profilerManager) {
+                vscode.window.showErrorMessage('SQL Profiler is not initialized');
+                return;
+            }
+
+            try {
+                const connectionsWithPasswords = await profilerManager.getConnectionsWithStoredPasswords();
+
+                if (connectionsWithPasswords.length === 0) {
+                    vscode.window.showInformationMessage('No stored passwords found for any connection profiles');
+                } else {
+                    const connectionsList = connectionsWithPasswords.join('\n• ');
+                    vscode.window.showInformationMessage(
+                        `Connections with stored passwords (${connectionsWithPasswords.length}):\n\n• ${connectionsList}`,
+                        { modal: true }
+                    );
+                }
+            } catch (error: any) {
+                vscode.window.showErrorMessage(`Failed to check stored passwords: ${error.message}`);
+            }
         })
     );
 }

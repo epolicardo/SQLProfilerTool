@@ -11,6 +11,7 @@ export interface MssqlConnection {
     authenticationType: 'SqlLogin' | 'Integrated';
     port?: number;
     encrypt?: boolean;
+    trustServerCertificate?: boolean;
 }
 
 export interface ProfilerEvent {
@@ -119,29 +120,72 @@ export class SqlProfilerManager {
         }
     }
 
+    private async isAzureSqlDatabase(): Promise<boolean> {
+        if (!this.pool) {
+            return false;
+        }
+
+        try {
+            const result = await this.pool.request().query('SELECT @@VERSION as version');
+            const version = result.recordset[0]?.version || '';
+            return version.toLowerCase().includes('azure');
+        } catch (error) {
+            Logger.error('Error detecting database type:', error);
+            return false; // Assume SQL Server if detection fails
+        }
+    }
+
     private async createXESession(): Promise<void> {
         if (!this.pool) {
             throw new Error('No database connection');
         }
 
-        const createSessionQuery = `
-            -- Drop existing session if it exists
-            IF EXISTS (SELECT * FROM sys.server_event_sessions WHERE name = '${this.sessionName}')
-                DROP EVENT SESSION [${this.sessionName}] ON SERVER;
+        // Detect if we're on Azure SQL Database vs SQL Server
+        const isAzure = await this.isAzureSqlDatabase();
 
-            -- Create new session
-            CREATE EVENT SESSION [${this.sessionName}] ON SERVER
-            ADD EVENT sqlserver.rpc_completed(
-                ACTION(sqlserver.client_app_name, sqlserver.database_name, sqlserver.username)
-                WHERE ([package0].[greater_than_uint64]([duration],(0)))
-            ),
-            ADD EVENT sqlserver.sql_batch_completed(
-                ACTION(sqlserver.client_app_name, sqlserver.database_name, sqlserver.username)
-                WHERE ([package0].[greater_than_uint64]([duration],(0)))
-            )
-            ADD TARGET package0.ring_buffer(SET max_events_limit=(1000))
-            WITH (STARTUP_STATE=OFF, EVENT_RETENTION_MODE=ALLOW_SINGLE_EVENT_LOSS);
-        `;
+        let createSessionQuery: string;
+
+        if (isAzure) {
+            // Azure SQL Database uses database-scoped Extended Events
+            createSessionQuery = `
+                -- Drop existing session if it exists (database-scoped)
+                IF EXISTS (SELECT * FROM sys.database_event_sessions WHERE name = '${this.sessionName}')
+                    DROP EVENT SESSION [${this.sessionName}] ON DATABASE;
+
+                -- Create new session (database-scoped for Azure SQL)
+                CREATE EVENT SESSION [${this.sessionName}] ON DATABASE
+                ADD EVENT sqlserver.rpc_completed(
+                    ACTION(sqlserver.client_app_name, sqlserver.database_name, sqlserver.username)
+                    WHERE ([package0].[greater_than_uint64]([duration],(0)))
+                ),
+                ADD EVENT sqlserver.sql_batch_completed(
+                    ACTION(sqlserver.client_app_name, sqlserver.database_name, sqlserver.username)
+                    WHERE ([package0].[greater_than_uint64]([duration],(0)))
+                )
+                ADD TARGET package0.ring_buffer(SET max_events_limit=(1000))
+                WITH (STARTUP_STATE=OFF, EVENT_RETENTION_MODE=ALLOW_SINGLE_EVENT_LOSS);
+            `;
+        } else {
+            // SQL Server uses server-scoped Extended Events
+            createSessionQuery = `
+                -- Drop existing session if it exists (server-scoped)
+                IF EXISTS (SELECT * FROM sys.server_event_sessions WHERE name = '${this.sessionName}')
+                    DROP EVENT SESSION [${this.sessionName}] ON SERVER;
+
+                -- Create new session (server-scoped for SQL Server)
+                CREATE EVENT SESSION [${this.sessionName}] ON SERVER
+                ADD EVENT sqlserver.rpc_completed(
+                    ACTION(sqlserver.client_app_name, sqlserver.database_name, sqlserver.username)
+                    WHERE ([package0].[greater_than_uint64]([duration],(0)))
+                ),
+                ADD EVENT sqlserver.sql_batch_completed(
+                    ACTION(sqlserver.client_app_name, sqlserver.database_name, sqlserver.username)
+                    WHERE ([package0].[greater_than_uint64]([duration],(0)))
+                )
+                ADD TARGET package0.ring_buffer(SET max_events_limit=(1000))
+                WITH (STARTUP_STATE=OFF, EVENT_RETENTION_MODE=ALLOW_SINGLE_EVENT_LOSS);
+            `;
+        }
 
         const request = this.pool.request();
         await request.query(createSessionQuery);
@@ -152,7 +196,10 @@ export class SqlProfilerManager {
             throw new Error('No database connection');
         }
 
-        const startQuery = `ALTER EVENT SESSION [${this.sessionName}] ON SERVER STATE = START;`;
+        const isAzure = await this.isAzureSqlDatabase();
+        const scope = isAzure ? 'DATABASE' : 'SERVER';
+        const startQuery = `ALTER EVENT SESSION [${this.sessionName}] ON ${scope} STATE = START;`;
+
         const request = this.pool.request();
         await request.query(startQuery);
     }
@@ -162,9 +209,13 @@ export class SqlProfilerManager {
             return;
         }
 
+        const isAzure = await this.isAzureSqlDatabase();
+        const scope = isAzure ? 'DATABASE' : 'SERVER';
+        const sessionView = isAzure ? 'sys.database_event_sessions' : 'sys.server_event_sessions';
+
         const stopQuery = `
-            IF EXISTS (SELECT * FROM sys.server_event_sessions WHERE name = '${this.sessionName}')
-                ALTER EVENT SESSION [${this.sessionName}] ON SERVER STATE = STOP;
+            IF EXISTS (SELECT * FROM ${sessionView} WHERE name = '${this.sessionName}')
+                ALTER EVENT SESSION [${this.sessionName}] ON ${scope} STATE = STOP;
         `;
 
         const request = this.pool.request();
@@ -176,9 +227,13 @@ export class SqlProfilerManager {
             return;
         }
 
+        const isAzure = await this.isAzureSqlDatabase();
+        const scope = isAzure ? 'DATABASE' : 'SERVER';
+        const sessionView = isAzure ? 'sys.database_event_sessions' : 'sys.server_event_sessions';
+
         const dropQuery = `
-            IF EXISTS (SELECT * FROM sys.server_event_sessions WHERE name = '${this.sessionName}')
-                DROP EVENT SESSION [${this.sessionName}] ON SERVER;
+            IF EXISTS (SELECT * FROM ${sessionView} WHERE name = '${this.sessionName}')
+                DROP EVENT SESSION [${this.sessionName}] ON ${scope};
         `;
 
         const request = this.pool.request();
@@ -197,6 +252,11 @@ export class SqlProfilerManager {
         }
 
         try {
+            // Use appropriate views based on database type
+            const isAzure = await this.isAzureSqlDatabase();
+            const sessionView = isAzure ? 'sys.dm_xe_database_sessions' : 'sys.dm_xe_sessions';
+            const sessionTargetView = isAzure ? 'sys.dm_xe_database_session_targets' : 'sys.dm_xe_session_targets';
+
             const query = `
                 SELECT 
                     event_data.value('(event/@timestamp)[1]', 'datetime2') AS event_timestamp,
@@ -208,8 +268,8 @@ export class SqlProfilerManager {
                     event_data.value('(event/action[@name="client_app_name"]/value)[1]', 'nvarchar(128)') AS application_name
                 FROM (
                     SELECT CAST(target_data AS XML) AS target_data
-                    FROM sys.dm_xe_sessions AS s
-                    JOIN sys.dm_xe_session_targets AS t 
+                    FROM ${sessionView} AS s
+                    JOIN ${sessionTargetView} AS t 
                       ON s.address = t.event_session_address
                     WHERE s.name = '${this.sessionName}'
                       AND t.target_name = 'ring_buffer'
@@ -337,7 +397,8 @@ export class SqlProfilerManager {
             password: conn.password || '',
             authenticationType: conn.authenticationType || 'SqlLogin',
             port: conn.port || 1433,
-            encrypt: conn.encrypt || false
+            encrypt: conn.encrypt || false,
+            trustServerCertificate: conn.trustServerCertificate
         }));
     }
 
@@ -379,6 +440,19 @@ export class SqlProfilerManager {
 
         console.log(`Found connection: ${connection.server}, auth: ${connection.authenticationType}`);
 
+        // TEMPORAL: Log original connection configuration from settings.json
+        console.log('=== ORIGINAL CONNECTION CONFIG FROM SETTINGS.JSON ===');
+        console.log('Profile Name:', connection.profileName);
+        console.log('Server:', connection.server);
+        console.log('Database:', connection.database);
+        console.log('User:', connection.user);
+        console.log('Password in config:', connection.password ? `[${connection.password.length} chars]` : 'NOT SET');
+        console.log('Auth Type:', connection.authenticationType);
+        console.log('Port:', connection.port);
+        console.log('Encrypt:', connection.encrypt);
+        console.log('TrustServerCertificate in config:', connection.trustServerCertificate);
+        console.log('=== END ORIGINAL CONNECTION CONFIG ===');
+
         // Convert mssql connection to sql.config format - use existing connection settings as-is
         const sqlConfig: any = {
             server: connection.server,
@@ -386,8 +460,8 @@ export class SqlProfilerManager {
             port: connection.port || 1433,
             // Use encrypt setting exactly as configured, or default based on server type
             encrypt: connection.encrypt !== undefined ? connection.encrypt : connection.server.includes('.database.windows.net'),
-            // Trust server certificate for local servers, validate for Azure
-            trustServerCertificate: connection.server.includes('.database.windows.net') ? false : true,
+            // Smart SSL certificate handling
+            trustServerCertificate: this.getTrustServerCertificateSetting(connection),
             options: {}
         };
 
@@ -412,6 +486,18 @@ export class SqlProfilerManager {
         }
 
         console.log(`Connecting to: ${sqlConfig.server}:${sqlConfig.port} using existing connection configuration`);
+
+        // TEMPORAL: Log connection details for debugging (INCLUDING PASSWORD)
+        console.log('=== DEBUGGING CONNECTION DETAILS (TEMPORAL) ===');
+        console.log('Server:', sqlConfig.server);
+        console.log('Port:', sqlConfig.port);
+        console.log('Database:', sqlConfig.database);
+        console.log('User:', sqlConfig.user);
+        console.log('Password:', sqlConfig.password); // ⚠️ TEMPORAL - REMOVE IN PRODUCTION
+        console.log('Encrypt:', sqlConfig.encrypt);
+        console.log('TrustServerCertificate:', sqlConfig.trustServerCertificate);
+        console.log('Auth Type:', connection.authenticationType);
+        console.log('=== END DEBUGGING CONNECTION DETAILS ===');
 
         try {
             this.pool = new sql.ConnectionPool(sqlConfig);
@@ -485,10 +571,18 @@ Current connection settings:
 • Server name/address is correct
 • Network connectivity
 • VPN connection if required`;
-            } else if (error.message?.includes('SSL') || error.message?.includes('TLS')) {
-                errorMessage = `SSL/TLS connection failed. Try:
-• Setting encrypt: false in connection settings
-• Or ensuring SSL certificate is valid`;
+            } else if (error.message?.includes('SSL') || error.message?.includes('TLS') || error.message?.includes('certificate')) {
+                errorMessage = `SSL/TLS certificate error. Current setting: trustServerCertificate: ${sqlConfig.trustServerCertificate}
+
+Try these solutions:
+• If local/dev server: Add "trustServerCertificate": true to your connection in settings.json
+• If Azure SQL: Ensure "encrypt": true and "trustServerCertificate": false
+• If on-premise with self-signed cert: Add "trustServerCertificate": true to connection settings
+
+Connection troubleshooting:
+• Server: ${connection.server}
+• Encrypt: ${sqlConfig.encrypt}
+• TrustServerCertificate: ${sqlConfig.trustServerCertificate}`;
             }
 
             Logger.error('Database connection failed', {
@@ -514,6 +608,7 @@ Current connection settings:
                 const storedPassword = await this.context.secrets.get(storageKey);
                 if (storedPassword) {
                     console.log(`Using stored password for ${profileName}`);
+                    console.log(`TEMPORAL DEBUG - Stored password: ${storedPassword}`); // ⚠️ TEMPORAL
                     return storedPassword;
                 }
             } catch (error) {
@@ -530,6 +625,7 @@ Current connection settings:
         });
 
         if (password) {
+            console.log(`TEMPORAL DEBUG - User entered password: ${password}`); // ⚠️ TEMPORAL
             // Ask if user wants to save the password
             const savePassword = await vscode.window.showQuickPick(
                 ['Yes, save password securely', 'No, ask every time'],
@@ -566,24 +662,175 @@ Current connection settings:
             await request.query('SELECT 1 as test');
             console.log('Basic SELECT access confirmed');
 
-            // Test if user can view server-level information (needed for Extended Events)
+            // Detect database type and version
+            const versionResult = await request.query('SELECT @@VERSION as version');
+            const version = versionResult.recordset[0]?.version || '';
+            const isAzureSQL = version.includes('Azure') || version.includes('Microsoft Azure');
+
+            console.log('Database version:', version);
+            console.log('Azure SQL Database detected:', isAzureSQL);
+
+            // Test Extended Events permissions based on environment
             try {
-                await request.query('SELECT name FROM sys.server_event_sessions WHERE name = \'test\'');
-                console.log('Extended Events system views access confirmed');
+                if (isAzureSQL) {
+                    // For Azure SQL Database, test database-scoped events
+                    await request.query('SELECT name FROM sys.database_event_sessions WHERE name = \'test\'');
+                    console.log('Azure SQL Database: database-scoped Extended Events access confirmed');
+                } else {
+                    // For SQL Server, test server-level events
+                    await request.query('SELECT name FROM sys.server_event_sessions WHERE name = \'test\'');
+                    console.log('SQL Server: server-level Extended Events access confirmed');
+                }
             } catch (xeError: any) {
                 console.warn('Limited Extended Events permissions detected:', xeError.message);
-                throw new Error(`Extended Events permissions required. User needs VIEW SERVER STATE permission or sysadmin role.
-                
-Current database connection works, but Extended Events requires higher permissions.
-Contact your DBA to grant VIEW SERVER STATE permission to your user.`);
+
+                let errorMessage = '';
+                if (isAzureSQL) {
+                    errorMessage = `Azure SQL Database Extended Events permissions required.
+
+SOLUTION OPTIONS:
+1. Ask your Azure SQL admin to grant you one of these roles:
+   • db_owner role in the database
+   • ALTER ANY DATABASE EVENT SESSION permission
+
+2. Alternative: Use Query Store instead (if available)
+   • Query Store provides similar query monitoring
+   • Usually available to db_datareader role
+
+Current connection works but Extended Events requires elevated permissions in Azure SQL Database.`;
+                } else {
+                    errorMessage = `SQL Server Extended Events permissions required.
+
+SOLUTION OPTIONS:
+1. Ask your DBA to grant: GRANT VIEW SERVER STATE TO [${await this.getCurrentUser()}]
+2. Or add your user to sysadmin role (less secure)
+3. Alternative: Use SQL Server Profiler (deprecated) or Query Store
+
+Current connection works but Extended Events requires VIEW SERVER STATE permission.`;
+                }
+
+                throw new Error(errorMessage);
             }
         } catch (error: any) {
-            if (error.message.includes('Extended Events permissions')) {
+            if (error.message.includes('Extended Events permissions') || error.message.includes('SOLUTION OPTIONS')) {
                 throw error; // Re-throw our custom error message
             }
             console.error('Basic database access test failed:', error);
             throw new Error(`Database access test failed: ${error.message}`);
         }
+    }
+
+    /**
+     * Gets the current database user
+     */
+    private async getCurrentUser(): Promise<string> {
+        if (!this.pool) {
+            return 'current_user';
+        }
+
+        try {
+            const request = this.pool.request();
+            const result = await request.query('SELECT CURRENT_USER as username');
+            return result.recordset[0]?.username || 'current_user';
+        } catch {
+            return 'current_user';
+        }
+    }
+
+    /**
+     * Determines the appropriate trustServerCertificate setting for the connection
+     */
+    private getTrustServerCertificateSetting(connection: MssqlConnection): boolean {
+        // If explicitly configured in connection settings, use that value
+        if (connection.hasOwnProperty('trustServerCertificate')) {
+            return (connection as any).trustServerCertificate;
+        }
+
+        // Smart defaults based on server type and environment
+        const server = connection.server.toLowerCase();
+
+        // Azure SQL Database - always validate certificates
+        if (server.includes('.database.windows.net')) {
+            console.log('Azure SQL detected - using trustServerCertificate: false');
+            return false;
+        }
+
+        // Local development servers (localhost, 127.0.0.1, local machine names)
+        if (server.includes('localhost') ||
+            server.includes('127.0.0.1') ||
+            server.includes('(local)') ||
+            server.includes('.local') ||
+            !server.includes('.')) {
+            console.log('Local server detected - using trustServerCertificate: true');
+            return true;
+        }
+
+        // For other servers, try both approaches
+        // Start with validating certificates (more secure)
+        console.log('Remote server detected - using trustServerCertificate: false (will retry with true if needed)');
+        return false;
+    }
+
+    /**
+     * Clears stored password for a specific connection profile
+     */
+    async clearStoredPassword(profileName: string): Promise<void> {
+        if (!this.context) {
+            throw new Error('Extension context not available for password management');
+        }
+
+        const storageKey = `sqlProfiler.password.${profileName}`;
+
+        try {
+            await this.context.secrets.delete(storageKey);
+            console.log(`TEMPORAL DEBUG - Cleared stored password for ${profileName}`);
+            Logger.info(`Stored password cleared for connection profile: ${profileName}`);
+        } catch (error) {
+            console.error('Failed to clear stored password:', error);
+            Logger.error(`Failed to clear stored password for ${profileName}`, error);
+            throw new Error(`Failed to clear stored password for ${profileName}: ${error}`);
+        }
+    }
+
+    /**
+     * Lists all connection profiles that have stored passwords
+     */
+    async getConnectionsWithStoredPasswords(): Promise<string[]> {
+        if (!this.context) {
+            return [];
+        }
+
+        const connections = this.getMssqlConnections();
+        const connectionsWithPasswords: string[] = [];
+
+        for (const connection of connections) {
+            if (connection.authenticationType === 'SqlLogin') {
+                const storageKey = `sqlProfiler.password.${connection.profileName}`;
+                try {
+                    const storedPassword = await this.context.secrets.get(storageKey);
+                    if (storedPassword) {
+                        connectionsWithPasswords.push(connection.profileName);
+                    }
+                } catch (error) {
+                    // Ignore errors when checking for stored passwords
+                }
+            }
+        }
+
+        return connectionsWithPasswords;
+    }
+
+    /**
+     * Clears all stored passwords for all connections
+     */
+    async clearAllStoredPasswords(): Promise<void> {
+        const connectionsWithPasswords = await this.getConnectionsWithStoredPasswords();
+
+        for (const profileName of connectionsWithPasswords) {
+            await this.clearStoredPassword(profileName);
+        }
+
+        Logger.info(`Cleared stored passwords for ${connectionsWithPasswords.length} connection profiles`);
     }
 
     dispose(): void {

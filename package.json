@@ -57,6 +57,24 @@
                 "title": "Show SQL Profiler Logs",
                 "category": "SQL Profiler",
                 "icon": "$(output)"
+            },
+            {
+                "command": "sqlProfiler.clearStoredPassword",
+                "title": "Clear Stored Password",
+                "category": "SQL Profiler",
+                "icon": "$(key)"
+            },
+            {
+                "command": "sqlProfiler.clearAllStoredPasswords",
+                "title": "Clear All Stored Passwords",
+                "category": "SQL Profiler",
+                "icon": "$(trash)"
+            },
+            {
+                "command": "sqlProfiler.showStoredPasswords",
+                "title": "Show Connections with Stored Passwords",
+                "category": "SQL Profiler",
+                "icon": "$(list-unordered)"
             }
         ],
         "menus": {
@@ -78,6 +96,15 @@
                 },
                 {
                     "command": "sqlProfiler.showLogs"
+                },
+                {
+                    "command": "sqlProfiler.clearStoredPassword"
+                },
+                {
+                    "command": "sqlProfiler.clearAllStoredPasswords"
+                },
+                {
+                    "command": "sqlProfiler.showStoredPasswords"
                 }
             ]
         },
