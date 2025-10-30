@@ -83,7 +83,7 @@
                     command: 'setConnection',
                     connectionName: selectedConnection
                 });
-                updateConnectionStatus(`Connected to: ${selectedConnection}`, 'connected');
+                updateConnectionStatus(`Selected connection: ${selectedConnection}`, 'connected');
             } else {
                 updateConnectionStatus('No connection selected', '');
             }
@@ -144,6 +144,11 @@
 
             case 'profilingStopped':
                 setProfilingState(false);
+                break;
+
+            case 'profilingError':
+                setProfilingState(false);
+                updateConnectionStatus(`Profiling Error: ${message.error}`, 'error');
                 break;
 
             case 'resultsCleared':
@@ -332,7 +337,11 @@
         connections.forEach(conn => {
             const option = document.createElement('option');
             option.value = conn.profileName;
-            option.textContent = `${conn.profileName} (${conn.server})`;
+
+            // Show authentication type
+            const authType = conn.authenticationType === 'Integrated' ? 'Windows Auth' : 'SQL Auth';
+            option.textContent = `${conn.profileName} (${conn.server}) - ${authType}`;
+
             connectionSelect.appendChild(option);
         });
     }

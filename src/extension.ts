@@ -1,18 +1,31 @@
 import * as vscode from 'vscode';
 import { SqlProfilerManager } from './profiler/SqlProfilerManager';
 import { ProfilerWebviewProvider } from './webview/ProfilerWebviewProvider';
+import { Logger } from './utils/Logger';
 
 let profilerManager: SqlProfilerManager | undefined;
 let currentPanel: vscode.WebviewPanel | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
-    console.log('SQL Server Profiler Tool extension is now active!');
+    // Initialize logger first
+    Logger.initialize(context);
+    Logger.info('SQL Server Profiler Tool extension is now active!');
 
     // Initialize the profiler manager
-    profilerManager = new SqlProfilerManager();
+    profilerManager = new SqlProfilerManager(context);
 
     // Register commands
     registerCommands(context);
+
+    // Command to show logs
+    context.subscriptions.push(
+        vscode.commands.registerCommand('sqlProfiler.showLogs', () => {
+            Logger.show();
+            vscode.window.showInformationMessage(
+                'SQL Profiler logs are now visible in the Output panel. You can also access them via View → Output → "SQL Server Profiler"'
+            );
+        })
+    );
 }
 
 function registerCommands(context: vscode.ExtensionContext) {
@@ -143,6 +156,15 @@ function registerCommands(context: vscode.ExtensionContext) {
 
 function handleWebviewMessage(message: any) {
     switch (message.command) {
+        case 'startProfiling':
+            startProfilingFromWebview();
+            break;
+        case 'stopProfiling':
+            stopProfilingFromWebview();
+            break;
+        case 'clearResults':
+            clearResultsFromWebview();
+            break;
         case 'getResults':
             if (profilerManager && currentPanel) {
                 const results = profilerManager.getResults();
@@ -219,6 +241,62 @@ async function setConnection(connectionName: string) {
             error: error instanceof Error ? error.message : 'Unknown error'
         });
     }
+}
+
+async function startProfilingFromWebview() {
+    if (!profilerManager || !currentPanel) {
+        return;
+    }
+
+    try {
+        await profilerManager.startProfiling();
+        vscode.window.showInformationMessage('SQL Server profiling started');
+
+        currentPanel.webview.postMessage({
+            command: 'profilingStarted'
+        });
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        vscode.window.showErrorMessage(`Failed to start profiling: ${errorMessage}`);
+
+        currentPanel.webview.postMessage({
+            command: 'profilingError',
+            error: errorMessage
+        });
+    }
+}
+
+async function stopProfilingFromWebview() {
+    if (!profilerManager || !currentPanel) {
+        return;
+    }
+
+    try {
+        await profilerManager.stopProfiling();
+        vscode.window.showInformationMessage('SQL Server profiling stopped');
+
+        currentPanel.webview.postMessage({
+            command: 'profilingStopped'
+        });
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        vscode.window.showErrorMessage(`Failed to stop profiling: ${errorMessage}`);
+    }
+}
+
+function clearResultsFromWebview() {
+    if (!profilerManager || !currentPanel) {
+        return;
+    }
+
+    profilerManager.clearResults();
+
+    currentPanel.webview.postMessage({
+        command: 'updateResults',
+        data: []
+    });
+
+    vscode.window.showInformationMessage('Profiler results cleared');
 }
 
 export function deactivate() {

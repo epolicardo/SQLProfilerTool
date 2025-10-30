@@ -51,6 +51,12 @@
                 "title": "Manage Database Connections",
                 "category": "SQL Profiler",
                 "icon": "$(server-environment)"
+            },
+            {
+                "command": "sqlProfiler.showLogs",
+                "title": "Show SQL Profiler Logs",
+                "category": "SQL Profiler",
+                "icon": "$(output)"
             }
         ],
         "menus": {
@@ -69,6 +75,9 @@
                 },
                 {
                     "command": "sqlProfiler.manageConnections"
+                },
+                {
+                    "command": "sqlProfiler.showLogs"
                 }
             ]
         },

@@ -1,5 +1,6 @@
 import * as sql from 'mssql';
 import * as vscode from 'vscode';
+import { Logger } from '../utils/Logger';
 
 export interface MssqlConnection {
     profileName: string;
@@ -28,10 +29,12 @@ export class SqlProfilerManager {
     private sessionName = 'VSCodeProfilerSession';
     private results: ProfilerEvent[] = [];
     private pollingInterval: any | undefined;
+    private context: vscode.ExtensionContext | undefined;
 
-    constructor() {
+    constructor(context?: vscode.ExtensionContext) {
         const config = vscode.workspace.getConfiguration('sqlProfiler');
         this.sessionName = config.get<string>('sessionName') || 'VSCodeProfilerSession';
+        this.context = context;
     }
 
     async startProfiling(): Promise<void> {
@@ -40,12 +43,19 @@ export class SqlProfilerManager {
         }
 
         try {
+            Logger.info('Starting profiling...');
+
             // Try to connect using selected mssql profile first
             const selectedProfile = this.getSelectedConnectionName();
+            Logger.info('Selected profile for profiling', { profile: selectedProfile });
+
             if (selectedProfile) {
+                console.log('Attempting to connect using selected profile...');
                 await this.connectUsingSelectedProfile();
+                console.log('Connected successfully using profile');
             } else {
                 // Fallback to connection string method
+                console.log('No profile selected, trying connection string...');
                 const config = vscode.workspace.getConfiguration('sqlProfiler');
                 const connectionString = config.get<string>('connectionString');
 
@@ -58,21 +68,28 @@ export class SqlProfilerManager {
 
                 this.pool = new sql.ConnectionPool(sqlConfig);
                 await this.pool.connect();
+                console.log('Connected successfully using connection string');
             }
 
             // Create Extended Events session
+            console.log('Creating Extended Events session...');
             await this.createXESession();
 
             // Start the session
+            console.log('Starting Extended Events session...');
             await this.startXESession();
 
             this.isProfilering = true;
 
             // Start polling for results
+            console.log('Starting polling for results...');
             this.startPolling();
+
+            Logger.info('Profiling started successfully!');
 
         } catch (error) {
             this.isProfilering = false;
+            Logger.error('Failed to start profiling', error);
             throw error;
         }
     }
@@ -345,22 +362,32 @@ export class SqlProfilerManager {
      */
     private async connectUsingSelectedProfile(): Promise<void> {
         const selectedProfile = this.getSelectedConnectionName();
+        console.log(`Getting connection for profile: ${selectedProfile}`);
+
         if (!selectedProfile) {
             throw new Error('No connection profile selected. Please select a connection first.');
         }
 
         const connections = this.getMssqlConnections();
+        console.log(`Available connections: ${connections.map(c => c.profileName).join(', ')}`);
+
         const connection = connections.find(conn => conn.profileName === selectedProfile);
 
         if (!connection) {
             throw new Error(`Connection profile '${selectedProfile}' not found in mssql.connections`);
         }
 
-        // Convert mssql connection to sql.config format
-        const sqlConfig: sql.config = {
+        console.log(`Found connection: ${connection.server}, auth: ${connection.authenticationType}`);
+
+        // Convert mssql connection to sql.config format - use existing connection settings as-is
+        const sqlConfig: any = {
             server: connection.server,
             database: connection.database || '',
             port: connection.port || 1433,
+            // Use encrypt setting exactly as configured, or default based on server type
+            encrypt: connection.encrypt !== undefined ? connection.encrypt : connection.server.includes('.database.windows.net'),
+            // Trust server certificate for local servers, validate for Azure
+            trustServerCertificate: connection.server.includes('.database.windows.net') ? false : true,
             options: {}
         };
 
@@ -369,12 +396,194 @@ export class SqlProfilerManager {
                 trustedConnection: true
             };
         } else {
+            // For SQL Authentication, handle password
             sqlConfig.user = connection.user;
-            sqlConfig.password = connection.password;
+
+            // If password is not in config, prompt for it
+            if (!connection.password) {
+                const password = await this.promptForPassword(connection.profileName, connection.user || '');
+                if (!password) {
+                    throw new Error('Password is required for SQL Server authentication');
+                }
+                sqlConfig.password = password;
+            } else {
+                sqlConfig.password = connection.password;
+            }
         }
 
-        this.pool = new sql.ConnectionPool(sqlConfig);
-        await this.pool.connect();
+        console.log(`Connecting to: ${sqlConfig.server}:${sqlConfig.port} using existing connection configuration`);
+
+        try {
+            this.pool = new sql.ConnectionPool(sqlConfig);
+            await this.pool.connect();
+            console.log('Database connection established successfully');
+
+            // Test basic database access with existing connection
+            await this.testBasicAccess();
+            console.log('Basic database access confirmed');
+
+        } catch (error: any) {
+            // Handle specific connection errors
+            let errorMessage = 'Connection failed';
+
+            if (error.code === 'ELOGIN') {
+                if (connection.authenticationType === 'SqlLogin') {
+                    if (connection.server.includes('.database.windows.net')) {
+                        // Azure SQL Database specific guidance - work with existing config
+                        errorMessage = `Azure SQL Database login failed for user '${connection.user}'. 
+                        
+Possible issues:
+• Incorrect password
+• User doesn't exist in this specific database
+• User lacks permissions for this database
+• IP address not whitelisted in Azure SQL firewall
+• Connection string format issue
+
+Current connection settings:
+• Server: ${connection.server}
+• User: ${connection.user}
+• Database: ${connection.database}
+• Encrypt: ${sqlConfig.encrypt}
+
+If this connection worked before, check:
+• Azure SQL firewall settings for your current IP
+• Database-specific user permissions`;
+                    } else {
+                        errorMessage = `SQL Server login failed for user '${connection.user}'. 
+                        
+Possible issues:
+• Incorrect password
+• User doesn't exist in SQL Server
+• User lacks login permissions
+• SQL Server authentication not enabled
+
+Current connection settings:
+• Server: ${connection.server}
+• User: ${connection.user}
+• Database: ${connection.database}`;
+                    }
+                } else {
+                    errorMessage = `Windows Authentication failed. 
+                    
+Possible issues:
+• Current Windows user lacks SQL Server login permissions
+• SQL Server doesn't accept Windows Authentication
+• Domain/network authentication issues
+
+Current connection settings:
+• Server: ${connection.server}
+• Database: ${connection.database}`;
+                }
+            } else if (error.code === 'ETIMEOUT') {
+                errorMessage = `Connection timeout to ${sqlConfig.server}:${sqlConfig.port}. Please check:
+• Server name/address is correct
+• Port number is correct (default: 1433)
+• Server is running and accessible
+• Firewall allows the connection`;
+            } else if (error.code === 'ENETUNREACH' || error.code === 'ENOTFOUND') {
+                errorMessage = `Cannot reach server ${sqlConfig.server}. Please check:
+• Server name/address is correct
+• Network connectivity
+• VPN connection if required`;
+            } else if (error.message?.includes('SSL') || error.message?.includes('TLS')) {
+                errorMessage = `SSL/TLS connection failed. Try:
+• Setting encrypt: false in connection settings
+• Or ensuring SSL certificate is valid`;
+            }
+
+            Logger.error('Database connection failed', {
+                code: error.code,
+                message: error.message,
+                server: sqlConfig.server,
+                user: sqlConfig.user || 'Windows Auth',
+                authType: connection.authenticationType,
+                encrypt: sqlConfig.encrypt
+            });
+
+            throw new Error(errorMessage);
+        }
+    }    /**
+     * Prompts user for password when needed
+     */
+    private async promptForPassword(profileName: string, username: string): Promise<string | undefined> {
+        // Try to get password from secure storage first
+        const storageKey = `sqlProfiler.password.${profileName}`;
+
+        if (this.context) {
+            try {
+                const storedPassword = await this.context.secrets.get(storageKey);
+                if (storedPassword) {
+                    console.log(`Using stored password for ${profileName}`);
+                    return storedPassword;
+                }
+            } catch (error) {
+                console.log('No stored password found, prompting user...');
+            }
+        }
+
+        // Prompt for password
+        const password = await vscode.window.showInputBox({
+            prompt: `Enter password for ${profileName} (${username})`,
+            password: true,
+            placeHolder: 'SQL Server password',
+            ignoreFocusOut: true
+        });
+
+        if (password) {
+            // Ask if user wants to save the password
+            const savePassword = await vscode.window.showQuickPick(
+                ['Yes, save password securely', 'No, ask every time'],
+                {
+                    placeHolder: 'Do you want to save this password securely for future use?',
+                    ignoreFocusOut: true
+                }
+            );
+
+            if (savePassword && savePassword.startsWith('Yes') && this.context) {
+                try {
+                    await this.context.secrets.store(storageKey, password);
+                    vscode.window.showInformationMessage(`Password saved securely for ${profileName}`);
+                } catch (error) {
+                    console.error('Failed to store password:', error);
+                }
+            }
+        }
+
+        return password;
+    }
+
+    /**
+     * Tests basic database connectivity and permissions
+     */
+    private async testBasicAccess(): Promise<void> {
+        if (!this.pool) {
+            throw new Error('No database connection available for testing');
+        }
+
+        try {
+            // Test basic SELECT permissions
+            const request = this.pool.request();
+            await request.query('SELECT 1 as test');
+            console.log('Basic SELECT access confirmed');
+
+            // Test if user can view server-level information (needed for Extended Events)
+            try {
+                await request.query('SELECT name FROM sys.server_event_sessions WHERE name = \'test\'');
+                console.log('Extended Events system views access confirmed');
+            } catch (xeError: any) {
+                console.warn('Limited Extended Events permissions detected:', xeError.message);
+                throw new Error(`Extended Events permissions required. User needs VIEW SERVER STATE permission or sysadmin role.
+                
+Current database connection works, but Extended Events requires higher permissions.
+Contact your DBA to grant VIEW SERVER STATE permission to your user.`);
+            }
+        } catch (error: any) {
+            if (error.message.includes('Extended Events permissions')) {
+                throw error; // Re-throw our custom error message
+            }
+            console.error('Basic database access test failed:', error);
+            throw new Error(`Database access test failed: ${error.message}`);
+        }
     }
 
     dispose(): void {
