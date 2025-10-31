@@ -155,14 +155,39 @@ export class SqlProfilerManager {
                 -- Create new session (database-scoped for Azure SQL)
                 CREATE EVENT SESSION [${this.sessionName}] ON DATABASE
                 ADD EVENT sqlserver.rpc_completed(
-                    ACTION(sqlserver.client_app_name, sqlserver.database_name, sqlserver.username)
-                    WHERE ([package0].[greater_than_uint64]([duration],(0)))
+                    SET collect_statement=(1)
+                    ACTION(
+                        sqlserver.client_app_name,
+                        sqlserver.database_name,
+                        sqlserver.username,
+                        sqlserver.session_id,
+                        sqlserver.sql_text
+                    )
+                    WHERE ([duration] > 0)
                 ),
                 ADD EVENT sqlserver.sql_batch_completed(
-                    ACTION(sqlserver.client_app_name, sqlserver.database_name, sqlserver.username)
-                    WHERE ([package0].[greater_than_uint64]([duration],(0)))
+                    SET collect_batch_text=(1)
+                    ACTION(
+                        sqlserver.client_app_name,
+                        sqlserver.database_name,
+                        sqlserver.username,
+                        sqlserver.session_id,
+                        sqlserver.sql_text
+                    )
+                    WHERE ([duration] > 0)
+                ),
+                ADD EVENT sqlserver.sql_statement_completed(
+                    SET collect_statement=(1)
+                    ACTION(
+                        sqlserver.client_app_name,
+                        sqlserver.database_name,
+                        sqlserver.username,
+                        sqlserver.session_id,
+                        sqlserver.sql_text
+                    )
+                    WHERE ([duration] > 1000)  -- Only statements taking more than 1ms
                 )
-                ADD TARGET package0.ring_buffer(SET max_events_limit=(1000))
+                ADD TARGET package0.ring_buffer(SET max_events_limit=(2000))
                 WITH (STARTUP_STATE=OFF, EVENT_RETENTION_MODE=ALLOW_SINGLE_EVENT_LOSS);
             `;
         } else {
@@ -175,14 +200,39 @@ export class SqlProfilerManager {
                 -- Create new session (server-scoped for SQL Server)
                 CREATE EVENT SESSION [${this.sessionName}] ON SERVER
                 ADD EVENT sqlserver.rpc_completed(
-                    ACTION(sqlserver.client_app_name, sqlserver.database_name, sqlserver.username)
-                    WHERE ([package0].[greater_than_uint64]([duration],(0)))
+                    SET collect_statement=(1)
+                    ACTION(
+                        sqlserver.client_app_name,
+                        sqlserver.database_name,
+                        sqlserver.username,
+                        sqlserver.session_id,
+                        sqlserver.sql_text
+                    )
+                    WHERE ([duration] > 0)
                 ),
                 ADD EVENT sqlserver.sql_batch_completed(
-                    ACTION(sqlserver.client_app_name, sqlserver.database_name, sqlserver.username)
-                    WHERE ([package0].[greater_than_uint64]([duration],(0)))
+                    SET collect_batch_text=(1)
+                    ACTION(
+                        sqlserver.client_app_name,
+                        sqlserver.database_name,
+                        sqlserver.username,
+                        sqlserver.session_id,
+                        sqlserver.sql_text
+                    )
+                    WHERE ([duration] > 0)
+                ),
+                ADD EVENT sqlserver.sql_statement_completed(
+                    SET collect_statement=(1)
+                    ACTION(
+                        sqlserver.client_app_name,
+                        sqlserver.database_name,
+                        sqlserver.username,
+                        sqlserver.session_id,
+                        sqlserver.sql_text
+                    )
+                    WHERE ([duration] > 1000)  -- Only statements taking more than 1ms
                 )
-                ADD TARGET package0.ring_buffer(SET max_events_limit=(1000))
+                ADD TARGET package0.ring_buffer(SET max_events_limit=(2000))
                 WITH (STARTUP_STATE=OFF, EVENT_RETENTION_MODE=ALLOW_SINGLE_EVENT_LOSS);
             `;
         }
@@ -246,12 +296,71 @@ export class SqlProfilerManager {
         }, 2000); // Poll every 2 seconds
     }
 
+    private async testBasicEventCapture(): Promise<void> {
+        if (!this.pool) return;
+
+        try {
+            const isAzure = await this.isAzureSqlDatabase();
+            const sessionView = isAzure ? 'sys.dm_xe_database_sessions' : 'sys.dm_xe_sessions';
+            const sessionTargetView = isAzure ? 'sys.dm_xe_database_session_targets' : 'sys.dm_xe_session_targets';
+
+            // Simple test query to see if we can get any data at all
+            const testQuery = `
+                SELECT TOP 1
+                    CAST(target_data AS XML) as raw_target_data,
+                    LEN(CAST(target_data AS nvarchar(max))) as data_length
+                FROM ${sessionTargetView} AS t 
+                JOIN ${sessionView} AS s ON s.address = t.event_session_address
+                WHERE s.name = '${this.sessionName}' AND t.target_name = 'ring_buffer'
+            `;
+
+            console.log('=== TESTING BASIC EVENT CAPTURE ===');
+            const result = await this.pool.request().query(testQuery);
+
+            if (result.recordset.length > 0) {
+                const record = result.recordset[0];
+                console.log('Target data length:', record.data_length);
+
+                if (record.raw_target_data && record.data_length > 0) {
+                    const xml = record.raw_target_data.toString();
+                    console.log('XML preview (first 1000 chars):', xml.substring(0, 1000));
+
+                    // Count events in XML
+                    const eventMatches = xml.match(/<event[^>]*>/g);
+                    console.log('Number of events found in XML:', eventMatches ? eventMatches.length : 0);
+                } else {
+                    console.log('No XML data in target');
+                }
+            } else {
+                console.log('No target data found - Extended Events session may not be capturing data');
+
+                // Check if session exists and is running
+                const sessionCheckQuery = `
+                    SELECT name, create_time, 
+                           CASE WHEN s.address IS NOT NULL THEN 'Running' ELSE 'Stopped' END as status
+                    FROM ${sessionView} s
+                    WHERE name = '${this.sessionName}'
+                `;
+                const sessionResult = await this.pool.request().query(sessionCheckQuery);
+                console.log('Session status:', sessionResult.recordset);
+            }
+
+        } catch (error) {
+            console.error('Basic event capture test failed:', error);
+        }
+    }
+
     private async collectResults(): Promise<void> {
         if (!this.pool || !this.isProfilering) {
             return;
         }
 
         try {
+            // Run basic test first time to help with debugging
+            if (this.results.length === 0) {
+                await this.testBasicEventCapture();
+            }
+
             // Use appropriate views based on database type
             const isAzure = await this.isAzureSqlDatabase();
             const sessionView = isAzure ? 'sys.dm_xe_database_sessions' : 'sys.dm_xe_sessions';
@@ -259,13 +368,64 @@ export class SqlProfilerManager {
 
             const query = `
                 SELECT 
-                    event_data.value('(event/@timestamp)[1]', 'datetime2') AS event_timestamp,
-                    event_data.value('(event/@name)[1]', 'varchar(50)') AS event_name,
-                    event_data.value('(event/data[@name="statement"]/value)[1]', 'nvarchar(max)') AS statement_text,
-                    event_data.value('(event/data[@name="duration"]/value)[1]', 'bigint') AS duration_microseconds,
-                    event_data.value('(event/action[@name="database_name"]/value)[1]', 'nvarchar(128)') AS database_name,
-                    event_data.value('(event/action[@name="username"]/value)[1]', 'nvarchar(128)') AS username,
-                    event_data.value('(event/action[@name="client_app_name"]/value)[1]', 'nvarchar(128)') AS application_name
+                    event_data.value('(@timestamp)[1]', 'datetime2') AS event_timestamp,
+                    event_data.value('(@name)[1]', 'varchar(50)') AS event_name,
+                    
+                    -- Multiple ways to get statement text (trying all possible field names and locations)
+                    COALESCE(
+                        NULLIF(TRIM(event_data.value('(data[@name="statement"]/value)[1]', 'nvarchar(max)')), ''),
+                        NULLIF(TRIM(event_data.value('(data[@name="batch_text"]/value)[1]', 'nvarchar(max)')), ''),
+                        NULLIF(TRIM(event_data.value('(data[@name="sql_text"]/value)[1]', 'nvarchar(max)')), ''),
+                        NULLIF(TRIM(event_data.value('(action[@name="sql_text"]/value)[1]', 'nvarchar(max)')), ''),
+                        NULLIF(TRIM(event_data.value('(text())[1]', 'nvarchar(max)')), ''),
+                        'No Statement Captured'
+                    ) AS statement_text,
+                    
+                    -- Duration in microseconds (try multiple field names)
+                    COALESCE(
+                        event_data.value('(data[@name="duration"]/value)[1]', 'bigint'),
+                        event_data.value('(data[@name="elapsed_time"]/value)[1]', 'bigint'),
+                        0
+                    ) AS duration_microseconds,
+                    
+                    -- Actions (metadata about the query execution) - try multiple sources
+                    COALESCE(
+                        event_data.value('(action[@name="database_name"]/value)[1]', 'nvarchar(128)'),
+                        event_data.value('(data[@name="database_name"]/value)[1]', 'nvarchar(128)'),
+                        DB_NAME(),
+                        'Unknown Database'
+                    ) AS database_name,
+                    
+                    COALESCE(
+                        event_data.value('(action[@name="username"]/value)[1]', 'nvarchar(128)'),
+                        event_data.value('(action[@name="server_principal_name"]/value)[1]', 'nvarchar(128)'),
+                        event_data.value('(data[@name="username"]/value)[1]', 'nvarchar(128)'),
+                        SYSTEM_USER,
+                        'Unknown User'
+                    ) AS username,
+                    
+                    COALESCE(
+                        event_data.value('(action[@name="client_app_name"]/value)[1]', 'nvarchar(128)'),
+                        event_data.value('(action[@name="application_name"]/value)[1]', 'nvarchar(128)'),
+                        event_data.value('(data[@name="client_app_name"]/value)[1]', 'nvarchar(128)'),
+                        'Unknown Application'
+                    ) AS application_name,
+                    
+                    COALESCE(
+                        event_data.value('(action[@name="session_id"]/value)[1]', 'int'),
+                        event_data.value('(data[@name="session_id"]/value)[1]', 'int'),
+                        0
+                    ) AS session_id,
+                    
+                    -- Additional useful fields
+                    event_data.value('(data[@name="cpu_time"]/value)[1]', 'bigint') AS cpu_time,
+                    event_data.value('(data[@name="logical_reads"]/value)[1]', 'bigint') AS logical_reads,
+                    event_data.value('(data[@name="physical_reads"]/value)[1]', 'bigint') AS physical_reads,
+                    event_data.value('(data[@name="writes"]/value)[1]', 'bigint') AS writes,
+                    
+                    -- Debug: Include raw XML for troubleshooting
+                    CAST(event_data AS nvarchar(max)) AS raw_xml
+                    
                 FROM (
                     SELECT CAST(target_data AS XML) AS target_data
                     FROM ${sessionView} AS s
@@ -275,22 +435,90 @@ export class SqlProfilerManager {
                       AND t.target_name = 'ring_buffer'
                 ) AS data
                 CROSS APPLY target_data.nodes('RingBufferTarget/event') AS events(event_data)
+                WHERE event_data.value('(event/@timestamp)[1]', 'datetime2') IS NOT NULL
                 ORDER BY event_timestamp DESC;
             `;
 
             const request = this.pool.request();
-            const result = await request.query(query);
+            let result;
+
+            try {
+                result = await request.query(query);
+            } catch (queryError) {
+                console.error('Main XE query failed, trying simplified version:', queryError);
+
+                // Fallback to simpler query if the complex one fails
+                const simpleQuery = `
+                    SELECT TOP 50
+                        event_data.value('(@name)[1]', 'varchar(100)') AS event_name,
+                        event_data.value('(@timestamp)[1]', 'datetime2') AS event_timestamp,
+                        'Simplified Capture' AS statement_text,
+                        0 AS duration_microseconds,
+                        DB_NAME() AS database_name,
+                        SYSTEM_USER AS username,
+                        'Extended Events' AS application_name
+                    FROM (
+                        SELECT CAST(target_data AS XML) AS target_data
+                        FROM ${sessionTargetView} AS t 
+                        JOIN ${sessionView} AS s ON s.address = t.event_session_address
+                        WHERE s.name = '${this.sessionName}' AND t.target_name = 'ring_buffer'
+                    ) AS data
+                    CROSS APPLY target_data.nodes('RingBufferTarget/event') AS events(event_data)
+                    WHERE event_data.value('(@timestamp)[1]', 'datetime2') IS NOT NULL
+                    ORDER BY event_timestamp DESC
+                `;
+
+                result = await request.query(simpleQuery);
+                console.log('Using simplified query, got', result.recordset.length, 'records');
+            }
+
+            // Debug logging
+            console.log(`=== XE RESULTS DEBUG ===`);
+            console.log(`Query returned ${result.recordset.length} records`);
+
+            if (result.recordset.length > 0) {
+                const sample = result.recordset[0];
+                console.log('Sample record structure:', Object.keys(sample));
+                console.log('Sample record values:', {
+                    event_timestamp: sample.event_timestamp,
+                    event_name: sample.event_name,
+                    statement_text: sample.statement_text?.substring(0, 100) + '...',
+                    database_name: sample.database_name,
+                    username: sample.username,
+                    application_name: sample.application_name
+                });
+
+                if (sample.raw_xml) {
+                    console.log('Raw XML sample (first 500 chars):', sample.raw_xml.substring(0, 500));
+                }
+            }
 
             // Convert results to our format
-            const newEvents: ProfilerEvent[] = result.recordset.map((record: any) => ({
-                timestamp: record.event_timestamp?.toISOString() || new Date().toISOString(),
-                eventName: record.event_name || 'Unknown',
-                statement: record.statement_text || '',
-                duration: record.duration_microseconds ? Math.round(record.duration_microseconds / 1000) : undefined,
-                databaseName: record.database_name || '',
-                userName: record.username || '',
-                applicationName: record.application_name || ''
-            }));
+            const newEvents: ProfilerEvent[] = result.recordset.map((record: any, index: number) => {
+                const event = {
+                    timestamp: record.event_timestamp?.toISOString() || new Date().toISOString(),
+                    eventName: record.event_name || 'Unknown',
+                    statement: record.statement_text || '',
+                    duration: record.duration_microseconds ? Math.round(record.duration_microseconds / 1000) : undefined,
+                    databaseName: record.database_name || 'Unknown',
+                    userName: record.username || 'Unknown',
+                    applicationName: record.application_name || 'Unknown'
+                };
+
+                // Debug logging for first few events
+                if (index < 3) {
+                    console.log(`Event ${index}:`, {
+                        raw_event_name: record.event_name,
+                        raw_statement: record.statement_text?.substring(0, 100),
+                        raw_database: record.database_name,
+                        raw_username: record.username,
+                        raw_app_name: record.application_name,
+                        mapped_event: event
+                    });
+                }
+
+                return event;
+            });
 
             // Add only new events (simple deduplication based on timestamp and statement)
             const existingKeys = new Set(this.results.map(e => `${e.timestamp}_${e.statement}`));
@@ -419,6 +647,328 @@ export class SqlProfilerManager {
     }
 
     /**
+     * Auto-corrects common Azure SQL server name format issues
+     */
+    private correctAzureSqlServerFormat(serverName: string): { corrected: string; wasChanged: boolean } {
+        let corrected = serverName;
+        let wasChanged = false;
+
+        // Remove tcp: prefix if present
+        if (corrected.toLowerCase().startsWith('tcp:')) {
+            corrected = corrected.substring(4);
+            wasChanged = true;
+        }
+
+        // Remove port suffix if present (e.g., ",1433" or ":1433")
+        if (corrected.includes(',1433')) {
+            corrected = corrected.replace(',1433', '');
+            wasChanged = true;
+        }
+        if (corrected.includes(':1433')) {
+            corrected = corrected.replace(':1433', '');
+            wasChanged = true;
+        }
+
+        return { corrected, wasChanged };
+    }
+
+    /**
+     * Attempts connection with automatic retry for SSL handshake errors (10054) and Azure SQL format corrections
+     */
+    private async connectWithAutoRetry(sqlConfig: any, connection: any): Promise<void> {
+        // Auto-correct Azure SQL server format if needed
+        const serverCorrection = this.correctAzureSqlServerFormat(sqlConfig.server);
+        if (serverCorrection.wasChanged) {
+            Logger.warn(`Auto-correcting Azure SQL server format: "${sqlConfig.server}" → "${serverCorrection.corrected}"`);
+            sqlConfig.server = serverCorrection.corrected;
+
+            // Show user notification about the auto-correction
+            const correctionMessage = `Server name auto-corrected to "${serverCorrection.corrected}". Consider updating your settings.json configuration.`;
+            vscode.window.showWarningMessage(correctionMessage, 'Update Settings').then(selection => {
+                if (selection === 'Update Settings') {
+                    vscode.commands.executeCommand('workbench.action.openSettings', 'sqlProfiler.connections');
+                }
+            });
+        }
+
+        try {
+            this.pool = new sql.ConnectionPool(sqlConfig);
+            await this.pool.connect();
+            console.log('Database connection established successfully');
+
+            // Test basic database access with existing connection
+            await this.testBasicAccess();
+            console.log('Basic database access confirmed');
+
+        } catch (error: any) {
+            // Check for Azure SQL format issues first (ENOTFOUND/ESOCKET with incorrect server format)
+            if ((error.code === 'ENOTFOUND' || error.code === 'ESOCKET') &&
+                (connection.server.includes('tcp:') || connection.server.includes(',1433'))) {
+
+                Logger.warn(`Azure SQL server format error detected. Attempting auto-correction...`);
+
+                try {
+                    // Close any existing pool
+                    if (this.pool) {
+                        await this.pool.close();
+                    }
+
+                    // Correct the server format and retry
+                    const serverCorrection = this.correctAzureSqlServerFormat(connection.server);
+                    const correctedConfig = { ...sqlConfig, server: serverCorrection.corrected };
+
+                    console.log('=== AZURE SQL SERVER FORMAT CORRECTION ===');
+                    console.log('Original server:', connection.server);
+                    console.log('Corrected server:', serverCorrection.corrected);
+                    console.log('=== END SERVER CORRECTION ===');
+
+                    this.pool = new sql.ConnectionPool(correctedConfig);
+                    await this.pool.connect();
+
+                    // Test basic database access with corrected connection
+                    await this.testBasicAccess();
+
+                    Logger.info(`✅ Connection successful with corrected server format: "${serverCorrection.corrected}"`);
+
+                    // Show success message with configuration guidance
+                    const suggestionMessage = `Connection successful! Server name was auto-corrected to "${serverCorrection.corrected}". Update your settings.json to use this format permanently.`;
+                    vscode.window.showInformationMessage(suggestionMessage, 'Update Settings').then(selection => {
+                        if (selection === 'Update Settings') {
+                            vscode.commands.executeCommand('workbench.action.openSettings', 'sqlProfiler.connections');
+                        }
+                    });
+
+                    return; // Success - exit function
+
+                } catch (retryError: any) {
+                    Logger.error('Connection failed even with corrected Azure SQL server format', retryError);
+                    // Fall through to SSL retry or original error handling
+                    error = retryError; // Use the retry error for further processing
+                }
+            }
+
+            // Check if this is the specific SSL handshake error 10054
+            if ((error.code === 10054 || error.message?.includes('10054') || error.message?.includes('pre-login handshake'))
+                && !sqlConfig.trustServerCertificate) {
+
+                Logger.warn(`SSL handshake failed (Error 10054). Attempting retry with trustServerCertificate: true...`);
+
+                try {
+                    // Close any existing pool
+                    if (this.pool) {
+                        await this.pool.close();
+                    }
+
+                    // Retry with trustServerCertificate: true
+                    const retryConfig = { ...sqlConfig, trustServerCertificate: true };
+
+                    console.log('=== RETRY WITH TRUST SERVER CERTIFICATE ===');
+                    console.log('Original trustServerCertificate:', sqlConfig.trustServerCertificate);
+                    console.log('Retry trustServerCertificate:', retryConfig.trustServerCertificate);
+                    console.log('=== END RETRY CONFIG ===');
+
+                    this.pool = new sql.ConnectionPool(retryConfig);
+                    await this.pool.connect();
+
+                    // Test basic database access with retry connection
+                    await this.testBasicAccess();
+
+                    Logger.info(`✅ Connection successful with trustServerCertificate: true. Consider adding this setting to your connection configuration.`);
+
+                    // Show success message with configuration guidance
+                    const suggestionMessage = `Connection successful! For future connections, add "trustServerCertificate": true to your settings.json configuration for ${connection.server}`;
+                    vscode.window.showInformationMessage(suggestionMessage, 'Open Settings').then(selection => {
+                        if (selection === 'Open Settings') {
+                            vscode.commands.executeCommand('workbench.action.openSettings', 'sqlProfiler.connections');
+                        }
+                    });
+
+                    return; // Success - exit function
+
+                } catch (retryError: any) {
+                    Logger.error('Connection failed even with trustServerCertificate: true', retryError);
+                    // Fall through to original error handling
+                }
+            }
+
+            // Handle all other errors or if retries also failed
+            this.handleConnectionError(error, connection, sqlConfig);
+        }
+    }
+
+    /**
+     * Handles connection errors with detailed guidance
+     */
+    private handleConnectionError(error: any, connection: any, sqlConfig: any): never {
+        let errorMessage = 'Connection failed';
+
+        if (error.code === 'ELOGIN') {
+            if (connection.authenticationType === 'SqlLogin') {
+                if (connection.server.includes('.database.windows.net')) {
+                    // Azure SQL Database specific guidance - work with existing config
+                    errorMessage = `Azure SQL Database login failed for user '${connection.user}'. 
+                    
+Possible issues:
+• Incorrect password
+• User doesn't exist in this specific database
+• User lacks permissions for this database
+• IP address not whitelisted in Azure SQL firewall
+• Connection string format issue
+
+Current connection settings:
+• Server: ${connection.server}
+• User: ${connection.user}
+• Database: ${connection.database}
+• Encrypt: ${sqlConfig.encrypt}
+
+If this connection worked before, check:
+• Azure SQL firewall settings for your current IP
+• Database-specific user permissions`;
+                } else {
+                    errorMessage = `SQL Server login failed for user '${connection.user}'. 
+                    
+Possible issues:
+• Incorrect password
+• User doesn't exist in SQL Server
+• User lacks login permissions
+• SQL Server authentication not enabled
+
+Current connection settings:
+• Server: ${connection.server}
+• User: ${connection.user}
+• Database: ${connection.database}`;
+                }
+            } else {
+                errorMessage = `Windows Authentication failed. 
+                
+Possible issues:
+• Current Windows user lacks SQL Server login permissions
+• SQL Server doesn't accept Windows Authentication
+• Domain/network authentication issues
+
+Current connection settings:
+• Server: ${connection.server}
+• Database: ${connection.database}`;
+            }
+        } else if (error.code === 'ETIMEOUT') {
+            errorMessage = `Connection timeout to ${sqlConfig.server}:${sqlConfig.port}. Please check:
+• Server name/address is correct
+• Port number is correct (default: 1433)
+• Server is running and accessible
+• Firewall allows the connection`;
+        } else if (error.code === 'ENETUNREACH' || error.code === 'ENOTFOUND' || error.code === 'ESOCKET') {
+            // Check for common Azure SQL configuration mistakes
+            if (sqlConfig.server.includes('tcp:') || sqlConfig.server.includes(',1433')) {
+                errorMessage = `❌ AZURE SQL SERVER NAME FORMAT ERROR
+
+Your server name has incorrect format: "${sqlConfig.server}"
+
+🔧 QUICK FIX - Update your settings.json:
+
+WRONG FORMAT (current):
+"server": "tcp:ordernow.database.windows.net,1433"
+
+CORRECT FORMAT (should be):
+"server": "ordernow.database.windows.net"
+
+Azure SQL Database connection format:
+{
+  "name": "Azure SQL",
+  "server": "ordernow.database.windows.net",
+  "database": "your-database-name",
+  "authenticationType": "SqlLogin",
+  "user": "epolicardo",
+  "encrypt": true,
+  "trustServerCertificate": false
+}
+
+REMOVE from server name:
+• "tcp:" prefix
+• ",1433" port suffix
+• Any protocol prefixes
+
+The port (1433) is handled automatically by the "port" property.`;
+            } else if (sqlConfig.server.includes('.database.windows.net')) {
+                errorMessage = `Cannot reach Azure SQL Database: ${sqlConfig.server}
+
+Possible issues for Azure SQL:
+• Server name format (should not include tcp: or port)
+• Network connectivity to Azure
+• Firewall rules on Azure SQL Server
+• VPN or corporate proxy blocking connection
+
+Current configuration:
+• Server: ${sqlConfig.server}
+• User: ${sqlConfig.user}
+• Database: ${sqlConfig.database || 'master'}
+
+Azure SQL Server firewall checklist:
+• Add your client IP address to server firewall rules
+• Enable "Allow Azure services" if connecting from Azure
+• Check if corporate firewall blocks outbound 1433`;
+            } else {
+                errorMessage = `Cannot reach server ${sqlConfig.server}. Please check:
+• Server name/address is correct
+• Network connectivity  
+• VPN connection if required
+• Firewall allows the connection on port ${sqlConfig.port || 1433}`;
+            }
+        } else if (error.code === 10054 || error.message?.includes('10054') || error.message?.includes('pre-login handshake')) {
+            errorMessage = `Error 10054: Connection forcibly closed during SSL handshake. 
+            
+This is usually an SSL/TLS configuration mismatch. Current setting: trustServerCertificate: ${sqlConfig.trustServerCertificate}
+
+AUTOMATIC RETRY SOLUTIONS:
+1. For LOCAL SQL Server instances (recommended):
+   • Add "trustServerCertificate": true to your connection settings
+   • This bypasses SSL certificate validation for local development
+
+2. For REMOTE/PRODUCTION servers:
+   • Ensure server has valid SSL certificate
+   • Use "encrypt": true, "trustServerCertificate": false
+
+MANUAL FIX in VS Code settings.json:
+{
+  "sqlProfiler.connections": [
+    {
+      "name": "Your Connection",
+      "server": "${connection.server}",
+      "trustServerCertificate": true  // Add this line
+    }
+  ]
+}
+
+Current connection settings:
+• Server: ${connection.server}
+• Encrypt: ${sqlConfig.encrypt}
+• TrustServerCertificate: ${sqlConfig.trustServerCertificate}`;
+        } else if (error.message?.includes('SSL') || error.message?.includes('TLS') || error.message?.includes('certificate')) {
+            errorMessage = `SSL/TLS certificate error. Current setting: trustServerCertificate: ${sqlConfig.trustServerCertificate}
+
+Try these solutions:
+• If local/dev server: Add "trustServerCertificate": true to your connection in settings.json
+• If Azure SQL: Ensure "encrypt": true and "trustServerCertificate": false
+• If on-premise with self-signed cert: Add "trustServerCertificate": true to connection settings
+
+Connection troubleshooting:
+• Server: ${connection.server}
+• Encrypt: ${sqlConfig.encrypt}
+• TrustServerCertificate: ${sqlConfig.trustServerCertificate}`;
+        }
+
+        Logger.error('Database connection failed', {
+            code: error.code,
+            message: error.message,
+            server: sqlConfig.server,
+            user: sqlConfig.user || 'Windows Auth',
+            authType: connection.authenticationType,
+            encrypt: sqlConfig.encrypt
+        });
+
+        throw new Error(errorMessage);
+    }
+
+    /**
      * Connects using the selected mssql connection profile
      */
     private async connectUsingSelectedProfile(): Promise<void> {
@@ -499,104 +1049,11 @@ export class SqlProfilerManager {
         console.log('Auth Type:', connection.authenticationType);
         console.log('=== END DEBUGGING CONNECTION DETAILS ===');
 
-        try {
-            this.pool = new sql.ConnectionPool(sqlConfig);
-            await this.pool.connect();
-            console.log('Database connection established successfully');
+        // Use auto-retry connection method for better error handling
+        await this.connectWithAutoRetry(sqlConfig, connection);
+    }
 
-            // Test basic database access with existing connection
-            await this.testBasicAccess();
-            console.log('Basic database access confirmed');
-
-        } catch (error: any) {
-            // Handle specific connection errors
-            let errorMessage = 'Connection failed';
-
-            if (error.code === 'ELOGIN') {
-                if (connection.authenticationType === 'SqlLogin') {
-                    if (connection.server.includes('.database.windows.net')) {
-                        // Azure SQL Database specific guidance - work with existing config
-                        errorMessage = `Azure SQL Database login failed for user '${connection.user}'. 
-                        
-Possible issues:
-• Incorrect password
-• User doesn't exist in this specific database
-• User lacks permissions for this database
-• IP address not whitelisted in Azure SQL firewall
-• Connection string format issue
-
-Current connection settings:
-• Server: ${connection.server}
-• User: ${connection.user}
-• Database: ${connection.database}
-• Encrypt: ${sqlConfig.encrypt}
-
-If this connection worked before, check:
-• Azure SQL firewall settings for your current IP
-• Database-specific user permissions`;
-                    } else {
-                        errorMessage = `SQL Server login failed for user '${connection.user}'. 
-                        
-Possible issues:
-• Incorrect password
-• User doesn't exist in SQL Server
-• User lacks login permissions
-• SQL Server authentication not enabled
-
-Current connection settings:
-• Server: ${connection.server}
-• User: ${connection.user}
-• Database: ${connection.database}`;
-                    }
-                } else {
-                    errorMessage = `Windows Authentication failed. 
-                    
-Possible issues:
-• Current Windows user lacks SQL Server login permissions
-• SQL Server doesn't accept Windows Authentication
-• Domain/network authentication issues
-
-Current connection settings:
-• Server: ${connection.server}
-• Database: ${connection.database}`;
-                }
-            } else if (error.code === 'ETIMEOUT') {
-                errorMessage = `Connection timeout to ${sqlConfig.server}:${sqlConfig.port}. Please check:
-• Server name/address is correct
-• Port number is correct (default: 1433)
-• Server is running and accessible
-• Firewall allows the connection`;
-            } else if (error.code === 'ENETUNREACH' || error.code === 'ENOTFOUND') {
-                errorMessage = `Cannot reach server ${sqlConfig.server}. Please check:
-• Server name/address is correct
-• Network connectivity
-• VPN connection if required`;
-            } else if (error.message?.includes('SSL') || error.message?.includes('TLS') || error.message?.includes('certificate')) {
-                errorMessage = `SSL/TLS certificate error. Current setting: trustServerCertificate: ${sqlConfig.trustServerCertificate}
-
-Try these solutions:
-• If local/dev server: Add "trustServerCertificate": true to your connection in settings.json
-• If Azure SQL: Ensure "encrypt": true and "trustServerCertificate": false
-• If on-premise with self-signed cert: Add "trustServerCertificate": true to connection settings
-
-Connection troubleshooting:
-• Server: ${connection.server}
-• Encrypt: ${sqlConfig.encrypt}
-• TrustServerCertificate: ${sqlConfig.trustServerCertificate}`;
-            }
-
-            Logger.error('Database connection failed', {
-                code: error.code,
-                message: error.message,
-                server: sqlConfig.server,
-                user: sqlConfig.user || 'Windows Auth',
-                authType: connection.authenticationType,
-                encrypt: sqlConfig.encrypt
-            });
-
-            throw new Error(errorMessage);
-        }
-    }    /**
+    /**
      * Prompts user for password when needed
      */
     private async promptForPassword(profileName: string, username: string): Promise<string | undefined> {

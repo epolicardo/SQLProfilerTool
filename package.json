@@ -2,7 +2,7 @@
     "name": "sql-server-profiler-tool",
     "displayName": "SQL Server Profiler Tool",
     "description": "SQL Server profiler extension using Extended Events for real-time query capture and analysis",
-    "version": "0.0.1",
+    "version": "0.0.4",
     "publisher": "epolicardo",
     "engines": {
         "vscode": "^1.74.0"
@@ -146,7 +146,8 @@
         "watch": "tsc -watch -p ./",
         "pretest": "npm run compile && npm run lint",
         "lint": "eslint src --ext ts",
-        "test": "node ./out/test/runTest.js"
+        "test": "node ./out/test/runTest.js",
+        "package": "vsce package"
     },
     "devDependencies": {
         "@types/mssql": "^9.1.8",

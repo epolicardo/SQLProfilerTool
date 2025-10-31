@@ -1,0 +1,37 @@
+{
+    "mssql.connections": [
+        {
+            "profileName": "SQL Server Local",
+            "server": "localhost",
+            "database": "master",
+            "authenticationType": "Integrated",
+            "encrypt": false,
+            "trustServerCertificate": true
+        },
+        {
+            "profileName": "SQL Server Local Express",
+            "server": "localhost\\SQLEXPRESS",
+            "database": "master",
+            "authenticationType": "Integrated",
+            "encrypt": false,
+            "trustServerCertificate": true
+        },
+        {
+            "profileName": "SQL Server Local - SQL Auth",
+            "server": "localhost",
+            "database": "master",
+            "authenticationType": "SqlLogin",
+            "user": "sa",
+            "encrypt": false,
+            "trustServerCertificate": true
+        },
+        {
+            "profileName": "SQL Server LocalDB",
+            "server": "(localdb)\\MSSQLLocalDB",
+            "database": "master",
+            "authenticationType": "Integrated",
+            "encrypt": false,
+            "trustServerCertificate": true
+        }
+    ]
+}
