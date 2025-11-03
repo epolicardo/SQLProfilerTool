@@ -1,0 +1,362 @@
+[
+  {
+    "timestamp": "2025-10-31T21:18:27.686Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT 1;'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:27.641Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT @@VERSION as version'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:27.597Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT 1;'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:27.552Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'\n                SELECT TOP 100\n                    event_data.value(''(@timestamp)[1]'', ''datetime2'') AS event_timestamp,\n                    event_data.value(''(@name)[1]'', ''varchar(50)'') AS event_name,\n                    \n                    -- Get statement text - corrected XPath for Extended Events XML structure\n                    COALESCE(\n                        event_data.value(''(data[@name=\"statement\"]/value)[1]'', ''nvarchar(max)''),\n                        event_data.value(''(data[@name=\"batch_text\"]/value)[1]'', ''nvarchar(max)''),\n                        event_data.value(''(data[@name=\"sql_text\"]/value)[1]'', ''nvarchar(max)''),\n                        ''No SQL Text Available''\n                    ) AS statement_text,\n                    \n                    -- Duration \n                    ISNULL(event_data.value(''(data[@name=\"duration\"]/value)[1]'', ''bigint''), 0) AS duration_microseconds,\n                    \n                    -- Database name from action\n                    COALESCE(\n                        event_data.value(''(action[@name=\"database_name\"]/value)[1]'', ''nvarchar(128)''),\n                        DB_NAME()\n                    ) AS database_name,\n                    \n                    -- Username from action\n                    COALESCE(\n                        event_data.value(''(action[@name=\"username\"]/value)[1]'', ''nvarchar(128)''),\n                        event_data.value(''(action[@name=\"server_principal_name\"]/value)[1]'', ''nvarchar(128)''),\n                        SYSTEM_USER\n                    ) AS username,\n                    \n                    -- Application name from action\n                    COALESCE(\n                        event_data.value(''(action[@name=\"client_app_name\"]/value)[1]'', ''nvarchar(128)''),\n                        ''Unknown Application''\n                    ) AS application_name\n                    \n                FROM (\n                    SELECT CAST(target_data AS XML) AS target_data\n                    FROM sys.dm_xe_database_session_targets AS t \n                    JOIN sys.dm_xe_database_sessions AS s ON s.address = t.event_session_address\n                    WHERE s.name = ''VSCodeProfilerSession'' \n                      AND t.target_name = ''ring_buffer''\n                ) AS data\n                CROSS APPLY target_data.nodes(''RingBufferTarget/event'') AS events(event_data)\n                WHERE event_data.value(''(@timestamp)[1]'', ''datetime2'') IS NOT NULL\n                ORDER BY event_timestamp DESC;\n            '",
+    "duration": 3414,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:25.543Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT 1;'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:25.493Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT @@VERSION as version'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:25.448Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT 1;'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:24.083Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT 1;'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:24.038Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT @@VERSION as version'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:23.994Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT 1;'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:23.943Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'\n                SELECT TOP 100\n                    event_data.value(''(@timestamp)[1]'', ''datetime2'') AS event_timestamp,\n                    event_data.value(''(@name)[1]'', ''varchar(50)'') AS event_name,\n                    \n                    -- Get statement text - corrected XPath for Extended Events XML structure\n                    COALESCE(\n                        event_data.value(''(data[@name=\"statement\"]/value)[1]'', ''nvarchar(max)''),\n                        event_data.value(''(data[@name=\"batch_text\"]/value)[1]'', ''nvarchar(max)''),\n                        event_data.value(''(data[@name=\"sql_text\"]/value)[1]'', ''nvarchar(max)''),\n                        ''No SQL Text Available''\n                    ) AS statement_text,\n                    \n                    -- Duration \n                    ISNULL(event_data.value(''(data[@name=\"duration\"]/value)[1]'', ''bigint''), 0) AS duration_microseconds,\n                    \n                    -- Database name from action\n                    COALESCE(\n                        event_data.value(''(action[@name=\"database_name\"]/value)[1]'', ''nvarchar(128)''),\n                        DB_NAME()\n                    ) AS database_name,\n                    \n                    -- Username from action\n                    COALESCE(\n                        event_data.value(''(action[@name=\"username\"]/value)[1]'', ''nvarchar(128)''),\n                        event_data.value(''(action[@name=\"server_principal_name\"]/value)[1]'', ''nvarchar(128)''),\n                        SYSTEM_USER\n                    ) AS username,\n                    \n                    -- Application name from action\n                    COALESCE(\n                        event_data.value(''(action[@name=\"client_app_name\"]/value)[1]'', ''nvarchar(128)''),\n                        ''Unknown Application''\n                    ) AS application_name\n                    \n                FROM (\n                    SELECT CAST(target_data AS XML) AS target_data\n                    FROM sys.dm_xe_database_session_targets AS t \n                    JOIN sys.dm_xe_database_sessions AS s ON s.address = t.event_session_address\n                    WHERE s.name = ''VSCodeProfilerSession'' \n                      AND t.target_name = ''ring_buffer''\n                ) AS data\n                CROSS APPLY target_data.nodes(''RingBufferTarget/event'') AS events(event_data)\n                WHERE event_data.value(''(@timestamp)[1]'', ''datetime2'') IS NOT NULL\n                ORDER BY event_timestamp DESC;\n            '",
+    "duration": 2364,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:23.937Z",
+    "eventName": "sql_batch_completed",
+    "statement": "set ansi_nulls on\nset ansi_null_dflt_on on\nset ansi_padding on\nset ansi_warnings on\nset arithabort on\nset concat_null_yields_null on\nset datefirst 7\nset dateformat mdy\nset implicit_transactions off\nset language us_english\nset numeric_roundabort off\nset quoted_identifier on\nset textsize 2147483647\nset transaction isolation level read committed\nset xact_abort off",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:21.520Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT 1;'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:21.474Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT @@VERSION as version'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:21.429Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT 1;'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:21.416Z",
+    "eventName": "sql_batch_completed",
+    "statement": "select * from category",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "vscode-mssql-GeneralConnection"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:20.995Z",
+    "eventName": "sql_batch_completed",
+    "statement": "select * from category",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "vscode-mssql-GeneralConnection"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:20.859Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'\n                SELECT TOP 100\n                    event_data.value(''(@timestamp)[1]'', ''datetime2'') AS event_timestamp,\n                    event_data.value(''(@name)[1]'', ''varchar(50)'') AS event_name,\n                    \n                    -- Get statement text - corrected XPath for Extended Events XML structure\n                    COALESCE(\n                        event_data.value(''(data[@name=\"statement\"]/value)[1]'', ''nvarchar(max)''),\n                        event_data.value(''(data[@name=\"batch_text\"]/value)[1]'', ''nvarchar(max)''),\n                        event_data.value(''(data[@name=\"sql_text\"]/value)[1]'', ''nvarchar(max)''),\n                        ''No SQL Text Available''\n                    ) AS statement_text,\n                    \n                    -- Duration \n                    ISNULL(event_data.value(''(data[@name=\"duration\"]/value)[1]'', ''bigint''), 0) AS duration_microseconds,\n                    \n                    -- Database name from action\n                    COALESCE(\n                        event_data.value(''(action[@name=\"database_name\"]/value)[1]'', ''nvarchar(128)''),\n                        DB_NAME()\n                    ) AS database_name,\n                    \n                    -- Username from action\n                    COALESCE(\n                        event_data.value(''(action[@name=\"username\"]/value)[1]'', ''nvarchar(128)''),\n                        event_data.value(''(action[@name=\"server_principal_name\"]/value)[1]'', ''nvarchar(128)''),\n                        SYSTEM_USER\n                    ) AS username,\n                    \n                    -- Application name from action\n                    COALESCE(\n                        event_data.value(''(action[@name=\"client_app_name\"]/value)[1]'', ''nvarchar(128)''),\n                        ''Unknown Application''\n                    ) AS application_name\n                    \n                FROM (\n                    SELECT CAST(target_data AS XML) AS target_data\n                    FROM sys.dm_xe_database_session_targets AS t \n                    JOIN sys.dm_xe_database_sessions AS s ON s.address = t.event_session_address\n                    WHERE s.name = ''VSCodeProfilerSession'' \n                      AND t.target_name = ''ring_buffer''\n                ) AS data\n                CROSS APPLY target_data.nodes(''RingBufferTarget/event'') AS events(event_data)\n                WHERE event_data.value(''(@timestamp)[1]'', ''datetime2'') IS NOT NULL\n                ORDER BY event_timestamp DESC;\n            '",
+    "duration": 1282,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:20.415Z",
+    "eventName": "sql_batch_completed",
+    "statement": "select * from category",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "vscode-mssql-GeneralConnection"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:19.878Z",
+    "eventName": "sql_batch_completed",
+    "statement": "select * from category",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "vscode-mssql-GeneralConnection"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:19.519Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT 1;'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:19.474Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT @@VERSION as version'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:19.429Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT 1;'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:18.366Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'\n                SELECT TOP 100\n                    event_data.value(''(@timestamp)[1]'', ''datetime2'') AS event_timestamp,\n                    event_data.value(''(@name)[1]'', ''varchar(50)'') AS event_name,\n                    \n                    -- Get statement text - corrected XPath for Extended Events XML structure\n                    COALESCE(\n                        event_data.value(''(data[@name=\"statement\"]/value)[1]'', ''nvarchar(max)''),\n                        event_data.value(''(data[@name=\"batch_text\"]/value)[1]'', ''nvarchar(max)''),\n                        event_data.value(''(data[@name=\"sql_text\"]/value)[1]'', ''nvarchar(max)''),\n                        ''No SQL Text Available''\n                    ) AS statement_text,\n                    \n                    -- Duration \n                    ISNULL(event_data.value(''(data[@name=\"duration\"]/value)[1]'', ''bigint''), 0) AS duration_microseconds,\n                    \n                    -- Database name from action\n                    COALESCE(\n                        event_data.value(''(action[@name=\"database_name\"]/value)[1]'', ''nvarchar(128)''),\n                        DB_NAME()\n                    ) AS database_name,\n                    \n                    -- Username from action\n                    COALESCE(\n                        event_data.value(''(action[@name=\"username\"]/value)[1]'', ''nvarchar(128)''),\n                        event_data.value(''(action[@name=\"server_principal_name\"]/value)[1]'', ''nvarchar(128)''),\n                        SYSTEM_USER\n                    ) AS username,\n                    \n                    -- Application name from action\n                    COALESCE(\n                        event_data.value(''(action[@name=\"client_app_name\"]/value)[1]'', ''nvarchar(128)''),\n                        ''Unknown Application''\n                    ) AS application_name\n                    \n                FROM (\n                    SELECT CAST(target_data AS XML) AS target_data\n                    FROM sys.dm_xe_database_session_targets AS t \n                    JOIN sys.dm_xe_database_sessions AS s ON s.address = t.event_session_address\n                    WHERE s.name = ''VSCodeProfilerSession'' \n                      AND t.target_name = ''ring_buffer''\n                ) AS data\n                CROSS APPLY target_data.nodes(''RingBufferTarget/event'') AS events(event_data)\n                WHERE event_data.value(''(@timestamp)[1]'', ''datetime2'') IS NOT NULL\n                ORDER BY event_timestamp DESC;\n            '",
+    "duration": 787,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:17.516Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT 1;'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:17.471Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT @@VERSION as version'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:17.423Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT 1;'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:16.509Z",
+    "eventName": "sql_batch_completed",
+    "statement": "select * from category",
+    "duration": 1,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "vscode-mssql-GeneralConnection"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:15.923Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'\n                SELECT TOP 100\n                    event_data.value(''(@timestamp)[1]'', ''datetime2'') AS event_timestamp,\n                    event_data.value(''(@name)[1]'', ''varchar(50)'') AS event_name,\n                    \n                    -- Get statement text - corrected XPath for Extended Events XML structure\n                    COALESCE(\n                        event_data.value(''(data[@name=\"statement\"]/value)[1]'', ''nvarchar(max)''),\n                        event_data.value(''(data[@name=\"batch_text\"]/value)[1]'', ''nvarchar(max)''),\n                        event_data.value(''(data[@name=\"sql_text\"]/value)[1]'', ''nvarchar(max)''),\n                        ''No SQL Text Available''\n                    ) AS statement_text,\n                    \n                    -- Duration \n                    ISNULL(event_data.value(''(data[@name=\"duration\"]/value)[1]'', ''bigint''), 0) AS duration_microseconds,\n                    \n                    -- Database name from action\n                    COALESCE(\n                        event_data.value(''(action[@name=\"database_name\"]/value)[1]'', ''nvarchar(128)''),\n                        DB_NAME()\n                    ) AS database_name,\n                    \n                    -- Username from action\n                    COALESCE(\n                        event_data.value(''(action[@name=\"username\"]/value)[1]'', ''nvarchar(128)''),\n                        event_data.value(''(action[@name=\"server_principal_name\"]/value)[1]'', ''nvarchar(128)''),\n                        SYSTEM_USER\n                    ) AS username,\n                    \n                    -- Application name from action\n                    COALESCE(\n                        event_data.value(''(action[@name=\"client_app_name\"]/value)[1]'', ''nvarchar(128)''),\n                        ''Unknown Application''\n                    ) AS application_name\n                    \n                FROM (\n                    SELECT CAST(target_data AS XML) AS target_data\n                    FROM sys.dm_xe_database_session_targets AS t \n                    JOIN sys.dm_xe_database_sessions AS s ON s.address = t.event_session_address\n                    WHERE s.name = ''VSCodeProfilerSession'' \n                      AND t.target_name = ''ring_buffer''\n                ) AS data\n                CROSS APPLY target_data.nodes(''RingBufferTarget/event'') AS events(event_data)\n                WHERE event_data.value(''(@timestamp)[1]'', ''datetime2'') IS NOT NULL\n                ORDER BY event_timestamp DESC;\n            '",
+    "duration": 356,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:15.510Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT 1;'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:15.464Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT @@VERSION as version'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:15.418Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT 1;'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:13.903Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'\n                SELECT TOP 100\n                    event_data.value(''(@timestamp)[1]'', ''datetime2'') AS event_timestamp,\n                    event_data.value(''(@name)[1]'', ''varchar(50)'') AS event_name,\n                    \n                    -- Get statement text - corrected XPath for Extended Events XML structure\n                    COALESCE(\n                        event_data.value(''(data[@name=\"statement\"]/value)[1]'', ''nvarchar(max)''),\n                        event_data.value(''(data[@name=\"batch_text\"]/value)[1]'', ''nvarchar(max)''),\n                        event_data.value(''(data[@name=\"sql_text\"]/value)[1]'', ''nvarchar(max)''),\n                        ''No SQL Text Available''\n                    ) AS statement_text,\n                    \n                    -- Duration \n                    ISNULL(event_data.value(''(data[@name=\"duration\"]/value)[1]'', ''bigint''), 0) AS duration_microseconds,\n                    \n                    -- Database name from action\n                    COALESCE(\n                        event_data.value(''(action[@name=\"database_name\"]/value)[1]'', ''nvarchar(128)''),\n                        DB_NAME()\n                    ) AS database_name,\n                    \n                    -- Username from action\n                    COALESCE(\n                        event_data.value(''(action[@name=\"username\"]/value)[1]'', ''nvarchar(128)''),\n                        event_data.value(''(action[@name=\"server_principal_name\"]/value)[1]'', ''nvarchar(128)''),\n                        SYSTEM_USER\n                    ) AS username,\n                    \n                    -- Application name from action\n                    COALESCE(\n                        event_data.value(''(action[@name=\"client_app_name\"]/value)[1]'', ''nvarchar(128)''),\n                        ''Unknown Application''\n                    ) AS application_name\n                    \n                FROM (\n                    SELECT CAST(target_data AS XML) AS target_data\n                    FROM sys.dm_xe_database_session_targets AS t \n                    JOIN sys.dm_xe_database_sessions AS s ON s.address = t.event_session_address\n                    WHERE s.name = ''VSCodeProfilerSession'' \n                      AND t.target_name = ''ring_buffer''\n                ) AS data\n                CROSS APPLY target_data.nodes(''RingBufferTarget/event'') AS events(event_data)\n                WHERE event_data.value(''(@timestamp)[1]'', ''datetime2'') IS NOT NULL\n                ORDER BY event_timestamp DESC;\n            '",
+    "duration": 147,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:13.692Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT 1;'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:13.646Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT @@VERSION as version'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:13.601Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT 1;'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:13.554Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'\n                SELECT TOP 1\n                    CAST(target_data AS XML) as raw_target_data,\n                    LEN(CAST(target_data AS nvarchar(max))) as data_length\n                FROM sys.dm_xe_database_session_targets AS t \n                JOIN sys.dm_xe_database_sessions AS s ON s.address = t.event_session_address\n                WHERE s.name = ''VSCodeProfilerSession'' AND t.target_name = ''ring_buffer''\n            '",
+    "duration": 1,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:13.508Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT 1;'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:13.460Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT @@VERSION as version'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  },
+  {
+    "timestamp": "2025-10-31T21:18:13.414Z",
+    "eventName": "rpc_completed",
+    "statement": "exec sp_executesql @statement=N'SELECT 1;'",
+    "duration": 0,
+    "databaseName": "ordernow-prod",
+    "userName": "epolicardo",
+    "applicationName": "node-mssql"
+  }
+]

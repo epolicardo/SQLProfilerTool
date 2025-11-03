@@ -1,0 +1,166 @@
+{
+    "name": "sql-server-profiler-tool",
+    "displayName": "SQL Server Profiler Tool",
+    "description": "SQL Server profiler extension using Extended Events for real-time query capture and analysis",
+    "version": "0.1.0",
+    "publisher": "epolicardo",
+    "engines": {
+        "vscode": "^1.74.0"
+    },
+    "categories": [
+        "Other",
+        "Debuggers"
+    ],
+    "keywords": [
+        "sql server",
+        "profiler",
+        "extended events",
+        "database",
+        "performance"
+    ],
+    "activationEvents": [],
+    "main": "./out/extension.js",
+    "contributes": {
+        "commands": [
+            {
+                "command": "sqlProfiler.startProfiling",
+                "title": "Start SQL Server Profiling",
+                "category": "SQL Profiler",
+                "icon": "$(play)"
+            },
+            {
+                "command": "sqlProfiler.stopProfiling",
+                "title": "Stop SQL Server Profiling",
+                "category": "SQL Profiler",
+                "icon": "$(debug-stop)"
+            },
+            {
+                "command": "sqlProfiler.openProfiler",
+                "title": "Open SQL Server Profiler",
+                "category": "SQL Profiler",
+                "icon": "$(database)"
+            },
+            {
+                "command": "sqlProfiler.clearResults",
+                "title": "Clear Profiler Results",
+                "category": "SQL Profiler",
+                "icon": "$(clear-all)"
+            },
+            {
+                "command": "sqlProfiler.manageConnections",
+                "title": "Manage Database Connections",
+                "category": "SQL Profiler",
+                "icon": "$(server-environment)"
+            },
+            {
+                "command": "sqlProfiler.showLogs",
+                "title": "Show SQL Profiler Logs",
+                "category": "SQL Profiler",
+                "icon": "$(output)"
+            },
+            {
+                "command": "sqlProfiler.clearStoredPassword",
+                "title": "Clear Stored Password",
+                "category": "SQL Profiler",
+                "icon": "$(key)"
+            },
+            {
+                "command": "sqlProfiler.clearAllStoredPasswords",
+                "title": "Clear All Stored Passwords",
+                "category": "SQL Profiler",
+                "icon": "$(trash)"
+            },
+            {
+                "command": "sqlProfiler.showStoredPasswords",
+                "title": "Show Connections with Stored Passwords",
+                "category": "SQL Profiler",
+                "icon": "$(list-unordered)"
+            }
+        ],
+        "menus": {
+            "commandPalette": [
+                {
+                    "command": "sqlProfiler.startProfiling"
+                },
+                {
+                    "command": "sqlProfiler.stopProfiling"
+                },
+                {
+                    "command": "sqlProfiler.openProfiler"
+                },
+                {
+                    "command": "sqlProfiler.clearResults"
+                },
+                {
+                    "command": "sqlProfiler.manageConnections"
+                },
+                {
+                    "command": "sqlProfiler.showLogs"
+                },
+                {
+                    "command": "sqlProfiler.clearStoredPassword"
+                },
+                {
+                    "command": "sqlProfiler.clearAllStoredPasswords"
+                },
+                {
+                    "command": "sqlProfiler.showStoredPasswords"
+                }
+            ]
+        },
+        "configuration": {
+            "title": "SQL Server Profiler Tool",
+            "properties": {
+                "sqlProfiler.connectionString": {
+                    "type": "string",
+                    "default": "",
+                    "description": "SQL Server connection string",
+                    "scope": "resource"
+                },
+                "sqlProfiler.sessionName": {
+                    "type": "string",
+                    "default": "VSCodeProfilerSession",
+                    "description": "Extended Events session name"
+                },
+                "sqlProfiler.autoStart": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Automatically start profiling when opening SQL files"
+                },
+                "sqlProfiler.maxEvents": {
+                    "type": "number",
+                    "default": 1000,
+                    "description": "Maximum number of events to capture"
+                },
+                "sqlProfiler.selectedConnection": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Name of the selected mssql connection profile for profiling"
+                }
+            }
+        }
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./",
+        "pretest": "npm run compile && npm run lint",
+        "lint": "eslint src --ext ts",
+        "test": "node ./out/test/runTest.js",
+        "package": "vsce package"
+    },
+    "devDependencies": {
+        "@types/mssql": "^9.1.8",
+        "@types/node": "^16.18.126",
+        "@types/tedious": "^18.0.0",
+        "@types/vscode": "^1.74.0",
+        "@typescript-eslint/eslint-plugin": "^5.45.0",
+        "@typescript-eslint/parser": "^5.45.0",
+        "eslint": "^8.28.0",
+        "glob": "^8.0.3",
+        "typescript": "^4.9.4"
+    },
+    "dependencies": {
+        "mssql": "^9.1.1"
+    }
+}
