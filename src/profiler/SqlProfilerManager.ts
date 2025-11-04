@@ -1,6 +1,7 @@
 import * as sql from 'mssql';
 import * as vscode from 'vscode';
 import { Logger } from '../utils/Logger';
+import { ConnectionPoolManager, PoolConfig, PoolStats } from '../database/ConnectionPoolManager';
 
 export interface MssqlConnection {
     profileName: string;
@@ -24,8 +25,20 @@ export interface ProfilerEvent {
     applicationName?: string;
 }
 
+export interface VSCodePoolConfig {
+    maxConnections?: number;
+    minConnections?: number;
+    idleTimeout?: number;
+    acquireTimeout?: number;
+    createTimeout?: number;
+    healthCheckEnabled?: boolean;
+    healthCheckInterval?: number;
+}
+
 export class SqlProfilerManager {
     private pool: sql.ConnectionPool | undefined;
+    private poolManager: ConnectionPoolManager;
+    private currentPoolKey: string | undefined;
     private isProfilering = false;
     private sessionName = 'VSCodeProfilerSession';
     private results: ProfilerEvent[] = [];
@@ -36,6 +49,7 @@ export class SqlProfilerManager {
         const config = vscode.workspace.getConfiguration('sqlProfiler');
         this.sessionName = config.get<string>('sessionName') || 'VSCodeProfilerSession';
         this.context = context;
+        this.poolManager = ConnectionPoolManager.getInstance();
     }
 
     async startProfiling(): Promise<void> {
@@ -52,8 +66,8 @@ export class SqlProfilerManager {
 
             if (selectedProfile) {
                 console.log('Attempting to connect using selected profile...');
-                await this.connectUsingSelectedProfile();
-                console.log('Connected successfully using profile');
+                await this.connectUsingPool();
+                console.log('Connected successfully using profile with pool');
             } else {
                 // Fallback to connection string method
                 console.log('No profile selected, trying connection string...');
@@ -64,12 +78,10 @@ export class SqlProfilerManager {
                     throw new Error('No connection configured. Please select an mssql connection or configure a connection string.');
                 }
 
-                // Parse connection string and create config
+                // Parse connection string and create config with pool
                 const sqlConfig = this.parseConnectionString(connectionString);
-
-                this.pool = new sql.ConnectionPool(sqlConfig);
-                await this.pool.connect();
-                console.log('Connected successfully using connection string');
+                await this.connectUsingConnectionStringPool(sqlConfig);
+                console.log('Connected successfully using connection string with pool');
             }
 
             // Create Extended Events session
@@ -115,8 +127,10 @@ export class SqlProfilerManager {
                 console.error('Error stopping XE session:', error);
             }
 
-            await this.pool.close();
+            // Note: We don't close the pool here as it's managed by the pool manager
+            // and may be reused by other operations
             this.pool = undefined;
+            this.currentPoolKey = undefined;
         }
     }
 
@@ -654,7 +668,7 @@ export class SqlProfilerManager {
      * Auto-corrects common Azure SQL server name format issues
      */
     private correctAzureSqlServerFormat(serverName: string): { corrected: string; wasChanged: boolean } {
-        let corrected = serverName;
+        let corrected = serverName.trim();
         let wasChanged = false;
 
         // Remove tcp: prefix if present
@@ -663,15 +677,27 @@ export class SqlProfilerManager {
             wasChanged = true;
         }
 
-        // Remove port suffix if present (e.g., ",1433" or ":1433")
-        if (corrected.includes(',1433')) {
-            corrected = corrected.replace(',1433', '');
-            wasChanged = true;
+        // Remove any port suffix (,1433, :1433, or any other port)
+        // First handle comma-separated port
+        if (corrected.includes(',')) {
+            const parts = corrected.split(',');
+            if (parts.length === 2 && /^\d+$/.test(parts[1].trim())) {
+                corrected = parts[0];
+                wasChanged = true;
+            }
         }
-        if (corrected.includes(':1433')) {
-            corrected = corrected.replace(':1433', '');
-            wasChanged = true;
+
+        // Then handle colon-separated port (but not for IPv6 addresses)
+        if (corrected.includes(':') && !corrected.includes('[')) {
+            const parts = corrected.split(':');
+            if (parts.length === 2 && /^\d+$/.test(parts[1].trim())) {
+                corrected = parts[0];
+                wasChanged = true;
+            }
         }
+
+        // Remove any trailing spaces
+        corrected = corrected.trim();
 
         return { corrected, wasChanged };
     }
@@ -1294,9 +1320,189 @@ Current connection works but Extended Events requires VIEW SERVER STATE permissi
         Logger.info(`Cleared stored passwords for ${connectionsWithPasswords.length} connection profiles`);
     }
 
+    /**
+     * Connects using the selected mssql profile with connection pooling
+     */
+    private async connectUsingPool(): Promise<void> {
+        const selectedProfile = this.getSelectedConnectionName();
+        console.log(`Getting connection pool for profile: ${selectedProfile}`);
+
+        if (!selectedProfile) {
+            throw new Error('No connection profile selected. Please select a connection first.');
+        }
+
+        const connections = this.getMssqlConnections();
+        console.log(`Available connections: ${connections.map(c => c.profileName).join(', ')}`);
+
+        const connection = connections.find(conn => conn.profileName === selectedProfile);
+
+        if (!connection) {
+            throw new Error(`Connection profile '${selectedProfile}' not found in mssql.connections`);
+        }
+
+        console.log(`Found connection: ${connection.server}, auth: ${connection.authenticationType}`);
+
+        // Auto-correct Azure SQL server format if needed
+        const serverCorrection = this.correctAzureSqlServerFormat(connection.server);
+        if (serverCorrection.wasChanged) {
+            Logger.info(`Server name corrected: ${connection.server} → ${serverCorrection.corrected}`);
+            console.log(`Server name auto-corrected: ${connection.server} → ${serverCorrection.corrected}`);
+        }
+
+        // Get pool configuration from VS Code settings
+        const config = vscode.workspace.getConfiguration('sqlProfiler');
+        const poolConfig = config.get<VSCodePoolConfig>('connectionPool') || {} as VSCodePoolConfig;
+
+        // Convert mssql connection to PoolConfig format
+        const sqlConfig: PoolConfig = {
+            server: serverCorrection.corrected,
+            database: connection.database || 'master',
+            port: connection.port || 1433,
+            encrypt: connection.encrypt !== undefined ? Boolean(connection.encrypt) : serverCorrection.corrected.includes('.database.windows.net'),
+            trustServerCertificate: Boolean(this.getTrustServerCertificateSetting(connection)),
+            poolName: `profiler_${selectedProfile}`,
+            maxConnections: poolConfig.maxConnections || 5,
+            minConnections: poolConfig.minConnections || 2,
+            idleTimeout: poolConfig.idleTimeout || 60000,
+            acquireTimeout: poolConfig.acquireTimeout || 30000,
+            createTimeout: poolConfig.createTimeout || 30000
+        };
+
+        if (connection.authenticationType === 'Integrated') {
+            sqlConfig.options = {
+                trustedConnection: true
+            };
+        } else {
+            // For SQL Authentication, handle password
+            sqlConfig.user = connection.user;
+
+            // If password is not in config, prompt for it
+            if (!connection.password) {
+                const password = await this.promptForPassword(connection.profileName, connection.user || '');
+                if (!password) {
+                    throw new Error('Password is required for SQL Server authentication');
+                }
+                sqlConfig.password = password;
+            } else {
+                sqlConfig.password = connection.password;
+            }
+        }
+
+        console.log(`Creating/getting connection pool for: ${sqlConfig.server}:${sqlConfig.port}`);
+        Logger.info('Pool configuration', {
+            server: sqlConfig.server,
+            database: sqlConfig.database,
+            maxConnections: sqlConfig.maxConnections,
+            minConnections: sqlConfig.minConnections,
+            idleTimeout: sqlConfig.idleTimeout
+        });
+
+        try {
+            this.pool = await this.poolManager.getPool(sqlConfig);
+            this.currentPoolKey = this.poolManager.getActivePoolKeys().find(key =>
+                key.includes(selectedProfile.replace(/[^a-zA-Z0-9_]/g, '_'))
+            );
+
+            Logger.info('Successfully connected using connection pool', {
+                poolKey: this.currentPoolKey,
+                connected: this.pool.connected
+            });
+        } catch (error) {
+            Logger.error('Failed to get connection pool:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Connects using connection string with pooling
+     */
+    private async connectUsingConnectionStringPool(sqlConfig: sql.config): Promise<void> {
+        const config = vscode.workspace.getConfiguration('sqlProfiler');
+        const poolConfig = config.get<VSCodePoolConfig>('connectionPool') || {} as VSCodePoolConfig;
+
+        const sqlConfigAny = sqlConfig as any;
+        const poolConfigWithDefaults: PoolConfig = {
+            server: sqlConfig.server,
+            database: sqlConfig.database,
+            user: sqlConfig.user,
+            password: sqlConfig.password,
+            port: sqlConfig.port,
+            encrypt: sqlConfigAny.encrypt !== undefined ? Boolean(sqlConfigAny.encrypt) : false,
+            trustServerCertificate: sqlConfigAny.trustServerCertificate !== undefined ? Boolean(sqlConfigAny.trustServerCertificate) : true,
+            options: sqlConfig.options,
+            poolName: 'profiler_connectionString',
+            maxConnections: poolConfig.maxConnections || 5,
+            minConnections: poolConfig.minConnections || 2,
+            idleTimeout: poolConfig.idleTimeout || 60000,
+            acquireTimeout: poolConfig.acquireTimeout || 30000,
+            createTimeout: poolConfig.createTimeout || 30000
+        };
+
+        console.log(`Creating/getting connection pool for connection string: ${poolConfigWithDefaults.server}`);
+        Logger.info('Pool configuration from connection string', {
+            server: poolConfigWithDefaults.server,
+            database: poolConfigWithDefaults.database,
+            maxConnections: poolConfigWithDefaults.maxConnections,
+            minConnections: poolConfigWithDefaults.minConnections
+        });
+
+        try {
+            this.pool = await this.poolManager.getPool(poolConfigWithDefaults);
+            this.currentPoolKey = 'profiler_connectionString_' + (poolConfigWithDefaults.server || 'localhost');
+
+            Logger.info('Successfully connected using connection string pool', {
+                poolKey: this.currentPoolKey,
+                connected: this.pool.connected
+            });
+        } catch (error) {
+            Logger.error('Failed to get connection string pool:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Gets current pool statistics
+     */
+    getPoolStats(): PoolStats | null {
+        if (!this.currentPoolKey) {
+            return null;
+        }
+        return this.poolManager.getPoolStats(this.currentPoolKey);
+    }
+
+    /**
+     * Gets statistics for all active pools
+     */
+    getAllPoolStats(): PoolStats[] {
+        return this.poolManager.getAllPoolStats();
+    }
+
+    /**
+     * Performs health check on the current pool
+     */
+    async performHealthCheck(): Promise<boolean> {
+        if (!this.currentPoolKey) {
+            return false;
+        }
+
+        const health = await this.poolManager.healthCheck();
+        return health[this.currentPoolKey] || false;
+    }
+
+    /**
+     * Closes all connection pools (useful for cleanup)
+     */
+    async closeAllPools(): Promise<void> {
+        await this.poolManager.closeAllPools();
+        this.pool = undefined;
+        this.currentPoolKey = undefined;
+    }
+
     dispose(): void {
         if (this.isProfilering) {
             this.stopProfiling();
         }
+        // Note: We don't close pools here as they might be used by other instances
+        // Pools will be cleaned up when the extension is deactivated
     }
 }

@@ -442,8 +442,22 @@ function clearResultsFromWebview() {
     vscode.window.showInformationMessage('Profiler results cleared');
 }
 
-export function deactivate() {
-    if (profilerManager) {
-        profilerManager.dispose();
+export async function deactivate() {
+    try {
+        if (profilerManager) {
+            // Dispose del profiler manager primero
+            await profilerManager.dispose();
+
+            // Cerrar todos los pools de conexiones
+            const { ConnectionPoolManager } = await import('./database/ConnectionPoolManager');
+            const poolManager = ConnectionPoolManager.getInstance();
+            await poolManager.closeAllPools();
+
+            Logger.info('Extension deactivated successfully - all resources cleaned up');
+        }
+    } catch (error) {
+        Logger.error('Error during extension deactivation:', error);
+        // Asegurar que el error no impida la desactivación
+        console.error('SQL Profiler Extension deactivation error:', error);
     }
 }

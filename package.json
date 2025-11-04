@@ -136,6 +136,64 @@
                     "type": "string",
                     "default": "",
                     "description": "Name of the selected mssql connection profile for profiling"
+                },
+                "sqlProfiler.connectionPool": {
+                    "type": "object",
+                    "default": {
+                        "maxConnections": 5,
+                        "minConnections": 2,
+                        "idleTimeout": 60000,
+                        "acquireTimeout": 30000,
+                        "createTimeout": 30000,
+                        "healthCheck": true,
+                        "healthCheckInterval": 30000
+                    },
+                    "description": "Connection pool configuration",
+                    "properties": {
+                        "maxConnections": {
+                            "type": "number",
+                            "default": 5,
+                            "minimum": 1,
+                            "maximum": 20,
+                            "description": "Maximum number of connections in the pool"
+                        },
+                        "minConnections": {
+                            "type": "number",
+                            "default": 2,
+                            "minimum": 1,
+                            "maximum": 10,
+                            "description": "Minimum number of connections to maintain in the pool"
+                        },
+                        "idleTimeout": {
+                            "type": "number",
+                            "default": 60000,
+                            "minimum": 5000,
+                            "description": "Time in milliseconds after which idle connections are closed"
+                        },
+                        "acquireTimeout": {
+                            "type": "number",
+                            "default": 30000,
+                            "minimum": 5000,
+                            "description": "Time in milliseconds to wait for acquiring a connection"
+                        },
+                        "createTimeout": {
+                            "type": "number",
+                            "default": 30000,
+                            "minimum": 5000,
+                            "description": "Time in milliseconds to wait for creating a new connection"
+                        },
+                        "healthCheck": {
+                            "type": "boolean",
+                            "default": true,
+                            "description": "Enable automatic health checks for connections"
+                        },
+                        "healthCheckInterval": {
+                            "type": "number",
+                            "default": 30000,
+                            "minimum": 10000,
+                            "description": "Interval in milliseconds for health check execution"
+                        }
+                    }
                 }
             }
         }
