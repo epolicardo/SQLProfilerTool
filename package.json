@@ -1,9 +1,10 @@
 {
     "name": "sql-server-profiler-tool",
     "displayName": "SQL Server Profiler Tool",
-    "description": "SQL Server profiler extension using Extended Events for real-time query capture and analysis",
-    "version": "0.1.0",
+    "description": "SQL Server profiler extension using Extended Events for real-time query capture and analysis with connection pooling and persistent UI state",
+    "version": "0.2.0",
     "publisher": "epolicardo",
+    "icon": "src/icon.svg",
     "engines": {
         "vscode": "^1.74.0"
     },
@@ -205,7 +206,24 @@
         "pretest": "npm run compile && npm run lint",
         "lint": "eslint src --ext ts",
         "test": "node ./out/test/runTest.js",
-        "package": "vsce package"
+        "package": "vsce package",
+        "publish": "vsce publish",
+        "prepublish": "npm run compile && npm run lint",
+        "clean": "rimraf out",
+        "rebuild": "npm run clean && npm run compile"
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/epolicardo/SQLProfilerTool.git"
+    },
+    "bugs": {
+        "url": "https://github.com/epolicardo/SQLProfilerTool/issues"
+    },
+    "homepage": "https://github.com/epolicardo/SQLProfilerTool#readme",
+    "license": "MIT",
+    "galleryBanner": {
+        "color": "#1e1e1e",
+        "theme": "dark"
     },
     "devDependencies": {
         "@types/mssql": "^9.1.8",

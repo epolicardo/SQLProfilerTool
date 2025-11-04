@@ -1,16 +1,38 @@
 # SQL Server Profiler Tool
 
-Una extensión de Visual Studio Code que proporciona capacidades de profiling de SQL Server usando Extended Events (XE) para capturar y analizar ejecuciones de consultas en tiempo real.
+[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](https://marketplace.visualstudio.com/items?itemName=epolicardo.sql-server-profiler-tool)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![VS Code](https://img.shields.io/badge/VS%20Code-1.74.0+-blue.svg)](https://code.visualstudio.com/)
 
-## Características
+**Professional SQL Server profiling directly in VS Code using Extended Events (XE)**
 
-- ✅ **Profiling en tiempo real** usando Extended Events de SQL Server
-- ✅ **Interfaz intuitiva** con webview integrado
-- ✅ **Filtrado avanzado** por base de datos, tipo de evento y texto de consulta
-- ✅ **Ordenamiento** de resultados por diferentes columnas
-- ✅ **Exportación** de resultados en formato JSON
-- ✅ **Configuración flexible** de conexión a SQL Server
-- ✅ **Auto-actualización** cuando el profiling está activo
+🚀 Real-time query capture and analysis with connection pooling and persistent UI state for uninterrupted troubleshooting workflow.
+
+## ✨ Key Features
+
+### 🔄 **Real-Time Profiling**
+- Live SQL query capture using Extended Events (XE)
+- **NEW in v0.2.0**: Persistent expanded state - analyze events without stopping capture
+- **NEW in v0.2.0**: Connection pooling for optimal performance
+- **NEW in v0.2.0**: Intelligent scroll position preservation
+
+### 📊 **Rich Analysis Interface**  
+- Expandable event details with comprehensive information
+- Advanced filtering by database, event type, and query text
+- Multi-column sorting with persistent preferences
+- Copy SQL to clipboard or open in new VS Code tab
+
+### 🔧 **Enterprise-Ready Architecture**
+- **Connection Pool Management**: Configurable pool size, timeouts, and health checks
+- **Auto-format Correction**: Automatic Azure SQL server name format fixes
+- **Health Monitoring**: Automatic connection validation and recovery
+- **Secure Credential Management**: Integration with VS Code secret storage
+
+### 🎯 **Developer Experience**
+- **Zero Configuration**: Works with existing mssql extension connections
+- **Intelligent State Management**: Events remain expanded during real-time updates
+- **Performance Optimized**: Memory-efficient event tracking with unique IDs
+- **Export Capabilities**: JSON export with query metadata
 
 ## Requisitos
 

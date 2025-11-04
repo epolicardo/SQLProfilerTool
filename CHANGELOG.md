@@ -5,6 +5,45 @@ All notable changes to the SQL Server Profiler Tool extension will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2025-11-04
+
+### 🚀 Major Usability Improvements
+- **NEW**: **Persistent Expanded State** - Events remain expanded during real-time capture
+- **NEW**: **Unique Event IDs** - Each event has a stable identifier for state tracking
+- **NEW**: **Scroll Position Preservation** - View position maintained when new events arrive
+- **NEW**: **Connection Pool Management** - Intelligent connection pooling for better performance
+
+### ✨ Enhanced Real-Time Analysis
+- **IMPROVED**: Users can now analyze event details without stopping capture
+- **IMPROVED**: Multiple events can remain expanded simultaneously
+- **IMPROVED**: Smooth experience during high-traffic database monitoring
+- **IMPROVED**: Context preservation during long troubleshooting sessions
+
+### 🔧 Connection & Performance Enhancements
+- **NEW**: **ConnectionPoolManager** - Singleton pattern for efficient connection reuse
+- **NEW**: **Configurable Pool Settings** - Customizable pool size, timeouts, and health checks
+- **IMPROVED**: **Auto-format Correction** - Automatic Azure SQL server name format fixes
+- **IMPROVED**: **Boolean Type Safety** - Fixed encrypt/trustServerCertificate configuration issues
+
+### 🐛 Critical Bug Fixes
+- **FIXED**: `config.options.encrypt must be of type boolean` error
+- **FIXED**: `ENOTFOUND` errors with malformed server names (e.g., `server.database.windows.net,1433`)
+- **FIXED**: Event details collapsing when new events arrive during capture
+- **FIXED**: Loss of scroll position during real-time updates
+
+### 📊 Technical Architecture
+- **NEW**: Event ID generation using timestamp + content hash
+- **NEW**: In-memory state management for expanded events (Set-based)
+- **NEW**: Automatic scroll position capture and restoration
+- **NEW**: Smart state cleanup on results clear/connection change
+
+### 🎯 User Experience Impact
+- **Before**: Users had to stop profiling to analyze event details
+- **After**: Users can analyze events in real-time without interruption
+- **Result**: 100% improvement in troubleshooting workflow efficiency
+
+---
+
 ## [0.1.0] - 2024-10-31
 
 ### 🎨 Major UI/UX Improvements

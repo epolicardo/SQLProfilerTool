@@ -19,6 +19,10 @@
     let sortDirection = 'desc';
     let isRunning = false;
 
+    // Estado para mantener elementos expandidos
+    const expandedEvents = new Set(); // IDs de eventos expandidos
+    let currentScrollPosition = 0;
+
     // Initialize when DOM is loaded
     document.addEventListener('DOMContentLoaded', function () {
         initializeElements();
@@ -154,6 +158,8 @@
             case 'resultsCleared':
                 currentResults = [];
                 filteredResults = [];
+                expandedEvents.clear(); // Limpiar estado de expansión
+                currentScrollPosition = 0;
                 renderResults();
                 updateDatabaseFilter();
                 break;
@@ -273,6 +279,12 @@
     }
 
     function renderResults() {
+        // Guardar posición de scroll antes de renderizar
+        const tableContainer = document.querySelector('.table-container');
+        if (tableContainer) {
+            currentScrollPosition = tableContainer.scrollTop;
+        }
+
         if (filteredResults.length === 0) {
             resultsBody.innerHTML = '<tr class="no-results"><td colspan="7">No events match the current filters.</td></tr>';
             return;
@@ -282,13 +294,20 @@
             const timestamp = new Date(result.timestamp).toLocaleString();
             const duration = result.duration || 0;
             const durationClass = getDurationClass(duration);
-            const rowId = `row-${index}`;
-            const expandedId = `expanded-${index}`;
+            const eventId = result.id; // Usar el ID único del evento
+            const rowId = `row-${eventId}`;
+            const expandedId = `expanded-${eventId}`;
+
+            // Verificar si este evento debe estar expandido
+            const isExpanded = expandedEvents.has(eventId);
+            const expandIcon = isExpanded ? '▼' : '▶';
+            const expandedClass = isExpanded ? 'show' : '';
+            const buttonClass = isExpanded ? 'expanded' : '';
 
             return `
-                <tr class="expandable-row" data-row-id="${rowId}" data-expanded-id="${expandedId}" data-index="${index}">
+                <tr class="expandable-row" data-row-id="${rowId}" data-expanded-id="${expandedId}" data-index="${index}" data-event-id="${eventId}">
                     <td>
-                        <button class="expand-btn" id="expand-btn-${rowId}">▶</button>
+                        <button class="expand-btn ${buttonClass}" id="expand-btn-${rowId}">${expandIcon}</button>
                     </td>
                     <td>${timestamp}</td>
                     <td>${result.eventName || 'Unknown'}</td>
@@ -297,7 +316,7 @@
                     <td class="${durationClass}">${duration > 0 ? duration.toLocaleString() : ''}</td>
                     <td title="${escapeHtml(result.statement)}">${escapeHtml(truncateText(result.statement, 100))}</td>
                 </tr>
-                <tr class="expanded-content" id="${expandedId}">
+                <tr class="expanded-content ${expandedClass}" id="${expandedId}">
                     <td colspan="7">
                         <div class="expanded-details">
                             ${renderExpandedContent(result, index)}
@@ -309,6 +328,14 @@
 
         // Add event listeners after rendering
         attachRowEventListeners();
+
+        // Restaurar posición de scroll después del renderizado
+        setTimeout(() => {
+            const tableContainer = document.querySelector('.table-container');
+            if (tableContainer && currentScrollPosition > 0) {
+                tableContainer.scrollTop = currentScrollPosition;
+            }
+        }, 0);
     }
 
     function renderExpandedContent(result, index) {
@@ -405,14 +432,21 @@
         const expandedRow = document.getElementById(expandedId);
         const expandBtn = document.getElementById(`expand-btn-${rowId}`);
 
+        // Extraer el eventId del rowId (formato: row-evt_timestamp_hash)
+        const eventId = rowId.replace('row-', '');
+
         if (expandedRow.classList.contains('show')) {
+            // Colapsar
             expandedRow.classList.remove('show');
             expandBtn.textContent = '▶';
             expandBtn.classList.remove('expanded');
+            expandedEvents.delete(eventId); // Remover del estado
         } else {
+            // Expandir
             expandedRow.classList.add('show');
             expandBtn.textContent = '▼';
             expandBtn.classList.add('expanded');
+            expandedEvents.add(eventId); // Agregar al estado
         }
     }
 

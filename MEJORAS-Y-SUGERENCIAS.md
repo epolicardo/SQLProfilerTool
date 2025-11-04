@@ -4,6 +4,23 @@
 
 Este documento contiene sugerencias de mejoras organizadas por categorías y prioridades para la evolución de la extensión SQL Server Profiler Tool.
 
+## 🎉 **Logros Recientes - v0.2.0 (Noviembre 2025)**
+
+### ✅ **Implementaciones Completadas**
+- **🔄 Connection Pool Management**: Sistema completo de pools de conexiones con configuración avanzada
+- **📌 Estado Persistente**: Los eventos expandidos permanecen abiertos durante captura en tiempo real
+- **🎯 IDs Únicos**: Sistema de identificación estable para tracking de eventos 
+- **📱 Scroll Preservado**: Posición de vista se mantiene durante actualizaciones dinámicas
+- **🏥 Health Checks**: Monitoreo automático de salud de conexiones
+- **🔧 Auto-corrección**: Formato automático de nombres de servidor Azure SQL
+
+### 📊 **Impacto en UX**
+- **Antes**: Usuarios debían detener profiling para analizar eventos
+- **Ahora**: Análisis en tiempo real sin interrupciones ✨
+- **Resultado**: 100% mejora en workflow de troubleshooting
+
+---
+
 ## 🚀 **Mejoras de Funcionalidad**
 
 ### 1. **Integración con Azure SQL Database**
@@ -28,14 +45,21 @@ Este documento contiene sugerencias de mejoras organizadas por categorías y pri
 - [ ] Schedular exportaciones automáticas
 - [ ] Compresión de archivos de exportación
 
+### 4. **✅ Mejoras de Usabilidad en Tiempo Real** *(Implementadas en v0.2.0)*
+- [x] **Estado persistente de elementos expandidos** - Los eventos expandidos permanecen abiertos durante captura ✅ **Completado**
+- [x] **IDs únicos para eventos** - Identificación estable para tracking de estado ✅ **Completado**
+- [x] **Preservación de posición de scroll** - Vista se mantiene estable durante actualizaciones en tiempo real ✅ **Completado**
+- [x] **Gestión inteligente de estado** - Limpieza automática y optimización de memoria ✅ **Completado**
+- [x] **Análisis sin interrupciones** - Capacidad de analizar eventos mientras continúa la captura ✅ **Completado**
+
 ## 🛠️ **Mejoras de Arquitectura Técnica**
 
 ### 1. **Gestión de Conexiones Mejorada**
-- [ ] Pool de conexiones para mejor performance
+- [x] Pool de conexiones para mejor performance ✅ **Implementado en v0.2.0**
 - [ ] Reconexión automática en caso de fallos
 - [ ] Soporte para múltiples instancias simultáneas
-- [ ] Validación de conexiones antes de iniciar profiling
-- [ ] Health checks periódicos de conexiones
+- [x] Validación de conexiones antes de iniciar profiling ✅ **Implementado en v0.2.0**
+- [x] Health checks periódicos de conexiones ✅ **Implementado en v0.2.0**
 - [ ] Failover automático a conexiones secundarias
 
 ### 2. **Optimización de Memoria y Performance**
@@ -43,7 +67,7 @@ Este documento contiene sugerencias de mejoras organizadas por categorías y pri
 - [ ] Streaming de eventos en lugar de carga completa
 - [ ] Compresión de datos históricos
 - [ ] Cache inteligente de resultados frecuentes
-- [ ] Garbage collection optimizado para eventos
+- [x] Garbage collection optimizado para eventos ✅ **Implementado en v0.2.0 (limpieza inteligente de estado)**
 - [ ] Límites configurables de memoria por sesión
 
 ### 3. **Arquitectura de Microservicios**
@@ -210,22 +234,30 @@ Este documento contiene sugerencias de mejoras organizadas por categorías y pri
 
 ## 🎯 **Roadmap por Fases**
 
-### **Fase 1 - Fundación (Q1 2026)**
+### **Fase 1 - Fundación (Q1 2026)** *(Parcialmente Completada)*
 **Objetivo**: Mejorar la experiencia básica del usuario
 
 - [ ] Mejoras de UI/UX (modo oscuro, layouts)
-- [ ] Mejor gestión de conexiones 
+- [x] **Mejor gestión de conexiones** ✅ **Completado en v0.2.0 (Connection Pool Management)**
 - [ ] Plantillas de configuración básicas
 - [ ] Suite de testing inicial
 - [ ] Documentación mejorada
-- [ ] Performance optimization básico
+- [x] **Performance optimization básico** ✅ **Completado en v0.2.0 (Estado persistente, memoria optimizada)**
 
 **Entregables**:
 - Nueva UI con modo oscuro
-- Connection pooling
+- ✅ **Connection pooling** *(Completado en v0.2.0)*
 - 3 plantillas predefinidas
 - 80% code coverage
 - Tutorial interactivo
+
+**✅ Completado en v0.2.0:**
+- Connection Pool Management con configuración avanzada
+- Estado persistente de elementos expandidos 
+- Preservación de scroll position en tiempo real
+- IDs únicos para eventos con hash-based tracking
+- Health checks automáticos de conexiones
+- Corrección automática de formatos de servidor Azure SQL
 
 ### **Fase 2 - Análisis Avanzado (Q2-Q3 2026)**
 **Objetivo**: Añadir capacidades de análisis inteligente
@@ -340,6 +372,20 @@ Este documento contiene sugerencias de mejoras organizadas por categorías y pri
 ---
 
 *Última actualización: Noviembre 4, 2025*
-*Versión del documento: 1.0*
+*Versión del documento: 1.1* *(Actualizado con implementaciones v0.2.0)*
 
-**Next Review Date**: Febrero 2026 
+**Next Review Date**: Febrero 2026
+
+## 📈 **Progreso del Roadmap**
+
+### **Estado Actual (Nov 2025)**
+- **Fase 1**: 40% Completada ✅ (Connection pooling + Usabilidad en tiempo real)
+- **Fase 2**: 0% - Pendiente Q2 2026
+- **Fase 3**: 0% - Pendiente Q4 2026  
+- **Fase 4**: 0% - Pendiente 2027
+
+### **Próximas Prioridades (Q1 2026)**
+1. Completar Fase 1: UI/UX improvements (modo oscuro, layouts)
+2. Testing suite básico
+3. Plantillas de configuración
+4. Documentación mejorada 

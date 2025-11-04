@@ -1,0 +1,40 @@
+.vscode/**
+.vscode-test/**
+src/**
+.gitignore
+.yarnrc
+vsc-extension-quickstart.md
+**/tsconfig.json
+**/.eslintrc.json
+**/*.map
+**/*.ts
+!out/**/*.js
+node_modules/**
+
+# Markdown files (excepto README.md)
+CHANGELOG.md
+MEJORAS-Y-SUGERENCIAS.md
+IMPLEMENTACION-POOL-CONEXIONES.md
+CORRECCION-ERROR-ENCRYPT-BOOLEAN.md
+CORRECCION-ERROR-SERVIDOR-FORMATO.md
+FASE-1-ESTADO-PERSISTENTE-COMPLETADO.md
+COMPACT_DESIGN_SUMMARY.md
+CSP-SOLUTION.md
+DEBUGGING-UNKNOWN-VALUES.md
+ERROR-10054-SOLUTION.md
+NUEVA-FUNCIONALIDAD-EXPANDIBLE.md
+RELEASE-NOTES-v0.0.2.md
+SOLUCION-SIMPLIFIED-CAPTURE.md
+SQL-SERVER-EXTENSION-INTEGRATION.md
+AZURE-CONNECTION-STRING-CONVERTER.md
+AZURE-ESOCKET-FIX-SUMMARY.md
+AZURE-SQL-CONNECTION-GUIDE.md
+
+# Test files
+test-queries.sql
+profiler-results.json
+
+# Development files
+.npmrc
+.prettierrc
+webpack.config.js

@@ -16,6 +16,7 @@ export interface MssqlConnection {
 }
 
 export interface ProfilerEvent {
+    id: string;  // Identificador único para mantener estado expandido
     timestamp: string;
     eventName: string;
     statement: string;
@@ -520,8 +521,12 @@ export class SqlProfilerManager {
                     duration: record.duration_microseconds ? Math.round(record.duration_microseconds / 1000) : undefined,
                     databaseName: record.database_name || 'Unknown',
                     userName: record.username || 'Unknown',
-                    applicationName: record.application_name || 'Unknown'
+                    applicationName: record.application_name || 'Unknown',
+                    id: '' // Será asignado después
                 };
+
+                // Generar ID único para el evento
+                event.id = this.generateEventId(event);
 
                 // Debug logging for first few events
                 if (index < 3) {
@@ -626,6 +631,31 @@ export class SqlProfilerManager {
 
     isRunning(): boolean {
         return this.isProfilering;
+    }
+
+    /**
+     * Generates a unique ID for an event
+     */
+    private generateEventId(event: Partial<ProfilerEvent>): string {
+        const timestamp = new Date(event.timestamp || Date.now()).getTime();
+        const content = `${event.statement || ''}_${event.userName || ''}_${event.databaseName || ''}`;
+        const hash = this.simpleHash(content);
+        return `evt_${timestamp}_${hash}`;
+    }
+
+    /**
+     * Simple hash function for generating event IDs
+     */
+    private simpleHash(str: string): string {
+        let hash = 0;
+        if (str.length === 0) return '0';
+
+        for (let i = 0; i < str.length; i++) {
+            const char = str.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash; // Convert to 32bit integer
+        }
+        return Math.abs(hash).toString(16).substring(0, 8);
     }
 
     /**
