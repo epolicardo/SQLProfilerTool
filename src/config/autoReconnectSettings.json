@@ -1,0 +1,56 @@
+{
+    "sqlProfiler.autoReconnect.maxRetries": {
+        "type": "number",
+        "default": 5,
+        "minimum": 1,
+        "maximum": 20,
+        "description": "Maximum number of reconnection attempts before giving up"
+    },
+    "sqlProfiler.autoReconnect.initialDelay": {
+        "type": "number",
+        "default": 1000,
+        "minimum": 100,
+        "maximum": 10000,
+        "description": "Initial delay between reconnection attempts in milliseconds"
+    },
+    "sqlProfiler.autoReconnect.backoffFactor": {
+        "type": "number",
+        "default": 2.0,
+        "minimum": 1.0,
+        "maximum": 5.0,
+        "description": "Exponential backoff factor for reconnection delays"
+    },
+    "sqlProfiler.autoReconnect.maxDelay": {
+        "type": "number",
+        "default": 30000,
+        "minimum": 1000,
+        "maximum": 300000,
+        "description": "Maximum delay between reconnection attempts in milliseconds"
+    },
+    "sqlProfiler.autoReconnect.connectionTimeout": {
+        "type": "number",
+        "default": 15000,
+        "minimum": 5000,
+        "maximum": 60000,
+        "description": "Timeout for each reconnection attempt in milliseconds"
+    },
+    "sqlProfiler.autoReconnect.enableCircuitBreaker": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable circuit breaker to prevent excessive reconnection attempts"
+    },
+    "sqlProfiler.autoReconnect.circuitBreakerThreshold": {
+        "type": "number",
+        "default": 3,
+        "minimum": 1,
+        "maximum": 10,
+        "description": "Number of consecutive failures before opening the circuit breaker"
+    },
+    "sqlProfiler.autoReconnect.circuitBreakerCooldown": {
+        "type": "number",
+        "default": 60000,
+        "minimum": 10000,
+        "maximum": 600000,
+        "description": "Time to wait before attempting to close the circuit breaker in milliseconds"
+    }
+}

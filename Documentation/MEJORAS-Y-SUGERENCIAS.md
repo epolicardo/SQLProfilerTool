@@ -4,15 +4,17 @@
 
 Este documento contiene sugerencias de mejoras organizadas por categorías y prioridades para la evolución de la extensión SQL Server Profiler Tool.
 
-## 🎉 **Logros Recientes - v0.2.0 (Noviembre 2025)**
+## 🎉 **Logros Recientes - v0.3.0 (Noviembre 2025)**
 
 ### ✅ **Implementaciones Completadas**
 - **🔄 Connection Pool Management**: Sistema completo de pools de conexiones con configuración avanzada
+- **🔁 Auto-Reconnect Manager**: Reconexión automática con circuit breaker, exponential backoff y clasificación de errores
 - **📌 Estado Persistente**: Los eventos expandidos permanecen abiertos durante captura en tiempo real
 - **🎯 IDs Únicos**: Sistema de identificación estable para tracking de eventos 
 - **📱 Scroll Preservado**: Posición de vista se mantiene durante actualizaciones dinámicas
 - **🏥 Health Checks**: Monitoreo automático de salud de conexiones
 - **🔧 Auto-corrección**: Formato automático de nombres de servidor Azure SQL
+- **📊 Event Capture Optimization**: Incremento de límite de eventos y mejor filtrado temporal
 
 ### 📊 **Impacto en UX**
 - **Antes**: Usuarios debían detener profiling para analizar eventos
@@ -56,7 +58,7 @@ Este documento contiene sugerencias de mejoras organizadas por categorías y pri
 
 ### 1. **Gestión de Conexiones Mejorada**
 - [x] Pool de conexiones para mejor performance ✅ **Implementado en v0.2.0**
-- [ ] Reconexión automática en caso de fallos
+- [x] Reconexión automática en caso de fallos ✅ **Implementado en v0.3.0 (AutoReconnectManager con circuit breaker)**
 - [ ] Soporte para múltiples instancias simultáneas
 - [x] Validación de conexiones antes de iniciar profiling ✅ **Implementado en v0.2.0**
 - [x] Health checks periódicos de conexiones ✅ **Implementado en v0.2.0**
@@ -259,6 +261,15 @@ Este documento contiene sugerencias de mejoras organizadas por categorías y pri
 - Health checks automáticos de conexiones
 - Corrección automática de formatos de servidor Azure SQL
 
+**✅ Completado en v0.3.0:**
+- AutoReconnectManager con circuit breaker pattern (closed/open/half-open states)
+- Exponential backoff con reintentos configurables
+- Clasificación de errores por tipo (network, auth, SSL, database, resource)
+- Event callbacks para monitoreo de reconexiones
+- Stats tracking de intentos y éxitos/fallos
+- Incremento de límite de captura de eventos (TOP 50 → TOP 200)
+- Optimización de filtros temporales y log throttling
+
 ### **Fase 2 - Análisis Avanzado (Q2-Q3 2026)**
 **Objetivo**: Añadir capacidades de análisis inteligente
 
@@ -371,15 +382,15 @@ Este documento contiene sugerencias de mejoras organizadas por categorías y pri
 
 ---
 
-*Última actualización: Noviembre 4, 2025*
-*Versión del documento: 1.1* *(Actualizado con implementaciones v0.2.0)*
+*Última actualización: Noviembre 12, 2025*
+*Versión del documento: 1.2* *(Actualizado con implementaciones v0.3.0)*
 
 **Next Review Date**: Febrero 2026
 
 ## 📈 **Progreso del Roadmap**
 
 ### **Estado Actual (Nov 2025)**
-- **Fase 1**: 40% Completada ✅ (Connection pooling + Usabilidad en tiempo real)
+- **Fase 1**: 50% Completada ✅ (Connection pooling + Auto-reconnect + Usabilidad en tiempo real)
 - **Fase 2**: 0% - Pendiente Q2 2026
 - **Fase 3**: 0% - Pendiente Q4 2026  
 - **Fase 4**: 0% - Pendiente 2027

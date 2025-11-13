@@ -201,7 +201,17 @@ body {
     color: #ef4444;
 }
 
-.event-count {
+.status-icon.starting {
+    color: #10b981;
+    animation: pulse-fast 0.8s ease-in-out infinite;
+}
+
+.status-icon.stopping {
+    color: #f59e0b;
+    animation: spin 1s linear infinite;
+}
+
+\n\n.event-count {
     font-weight: 500;
 }
 
@@ -216,6 +226,36 @@ body {
         opacity: 0.5;
     }
 }
+
+@keyframes pulse-fast {
+
+    0%,
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+
+    50% {
+        opacity: 0.6;
+        transform: scale(1.1);
+    }
+}
+
+@keyframes spin {
+    0% {
+        transform: rotate(0deg);
+        \n
+    }
+
+    \n 100% {
+        \n transform: rotate(360deg);
+        \n
+    }
+
+    \n
+}
+
+\n\n
 
 /* Filters */
 .filters {
@@ -334,7 +374,8 @@ body {
 }
 
 /* SQL Statement Column */
-.results-table td:last-child {
+.results-table td:last-child,
+.sql-statement-cell {
     font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
     font-size: 12px;
     background-color: var(--vscode-textCodeBlock-background);
@@ -343,12 +384,54 @@ body {
     text-overflow: ellipsis;
     white-space: nowrap;
     cursor: pointer;
+    position: relative;
 }
 
-.results-table td:last-child:hover {
-    white-space: normal;
-    word-break: break-all;
-    max-width: none;
+/* Tooltip para SQL Statement sin afectar dimensiones */
+.sql-tooltip {
+    position: absolute;
+    top: -10px;
+    left: 0;
+    background-color: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-focusBorder);
+    border-radius: 4px;
+    padding: 8px 12px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--vscode-editor-foreground);
+    white-space: pre-wrap;
+    word-break: break-word;
+    min-width: 200px;
+    max-width: 600px;
+    max-height: 300px;
+    overflow-y: auto;
+    z-index: 1000;
+    box-shadow:
+        0 2px 8px rgba(0, 0, 0, 0.2),
+        0 0 0 1px var(--vscode-widget-border);
+    display: none;
+    pointer-events: none;
+    /* Evita que el tooltip interfiera con el mouse */
+    transform: translateY(-100%);
+    /* Posiciona arriba de la celda */
+}
+
+.sql-tooltip.visible {
+    display: block;
+    animation: tooltipFadeIn 0.2s ease-out;
+}
+
+@keyframes tooltipFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-100%) scale(0.95);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(-100%) scale(1);
+    }
 }
 
 /* Duration highlighting */
@@ -651,7 +734,7 @@ body {
     border-radius: 3px;
     font-size: 12px;
     min-width: 120px;
-    max-width: 200px;
+    max-width: 350px;
 }
 
 .compact-select:focus {
@@ -750,7 +833,18 @@ body {
     color: var(--vscode-descriptionForeground);
 }
 
-.separator {
+.status-compact .status-icon.starting {
+    color: #10b981;
+    animation: pulse-fast 0.8s infinite;
+}
+
+.status-compact .status-icon.stopping {
+    \n color: #f59e0b;
+    \n animation: spin 1s linear infinite;
+    \n
+}
+
+\n\n.separator {
     color: var(--vscode-widget-border);
     margin: 0 2px;
 }

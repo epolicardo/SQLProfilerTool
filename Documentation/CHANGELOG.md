@@ -12,12 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **NEW**: **Unique Event IDs** - Each event has a stable identifier for state tracking
 - **NEW**: **Scroll Position Preservation** - View position maintained when new events arrive
 - **NEW**: **Connection Pool Management** - Intelligent connection pooling for better performance
+- **NEW**: **🛡️ Anti-Recursion System** - Intelligent filtering prevents profiler from capturing its own queries
 
 ### ✨ Enhanced Real-Time Analysis
 - **IMPROVED**: Users can now analyze event details without stopping capture
 - **IMPROVED**: Multiple events can remain expanded simultaneously
 - **IMPROVED**: Smooth experience during high-traffic database monitoring
 - **IMPROVED**: Context preservation during long troubleshooting sessions
+- **IMPROVED**: **Clean Results** - Internal profiler queries no longer appear in capture results
+- **IMPROVED**: **Reduced Noise** - System maintenance queries automatically filtered out
 
 ### 🔧 Connection & Performance Enhancements
 - **NEW**: **ConnectionPoolManager** - Singleton pattern for efficient connection reuse
@@ -30,12 +33,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **FIXED**: `ENOTFOUND` errors with malformed server names (e.g., `server.database.windows.net,1433`)
 - **FIXED**: Event details collapsing when new events arrive during capture
 - **FIXED**: Loss of scroll position during real-time updates
+- **FIXED**: **Recursive Query Capture** - Profiler no longer captures its own internal queries
+- **FIXED**: **Query Result Pollution** - Eliminated irrelevant system queries from user results
 
 ### 📊 Technical Architecture
 - **NEW**: Event ID generation using timestamp + content hash
 - **NEW**: In-memory state management for expanded events (Set-based)
 - **NEW**: Automatic scroll position capture and restoration
 - **NEW**: Smart state cleanup on results clear/connection change
+- **NEW**: **Multi-layer Query Filtering** - Application name, session name, and system query filters
+- **NEW**: **Connection Tagging** - All connections identified as "SQL Profiler Tool for VS Code"
+- **NEW**: **Anti-recursion Algorithm** - Dynamic filter generation with multiple protection levels
 
 ### 🎯 User Experience Impact
 - **Before**: Users had to stop profiling to analyze event details

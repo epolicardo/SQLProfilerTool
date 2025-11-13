@@ -80,7 +80,11 @@ export class ConnectionPoolManager {
      * Creates a new connection pool with the specified configuration
      */
     private async createNewPool(config: PoolConfig, poolKey: string): Promise<sql.ConnectionPool> {
-        // Create base pool configuration
+        // Detect if Azure SQL Database for optimized settings
+        const isAzureSql = config.server.toLowerCase().includes('.database.windows.net') ||
+            config.server.toLowerCase().includes('.sql.azuresynapse.net');
+
+        // Create base pool configuration with Azure SQL optimizations
         const poolConfig: any = {
             server: config.server,
             database: config.database,
@@ -90,17 +94,20 @@ export class ConnectionPoolManager {
             // Ensure encrypt and trustServerCertificate are boolean values
             encrypt: config.encrypt !== undefined ? Boolean(config.encrypt) : false,
             trustServerCertificate: config.trustServerCertificate !== undefined ? Boolean(config.trustServerCertificate) : true,
-            requestTimeout: 30000,
-            connectionTimeout: 30000,
+            // Azure SQL needs longer timeouts due to network latency and throttling
+            requestTimeout: isAzureSql ? 180000 : 90000,  // 3 min for Azure, 90s for on-prem
+            connectionTimeout: isAzureSql ? 60000 : 30000,  // 1 min for Azure, 30s for on-prem
             pool: {
                 max: config.maxConnections || 5,
-                min: config.minConnections || 1,
-                idleTimeoutMillis: config.idleTimeout || 30000,
-                acquireTimeoutMillis: config.acquireTimeout || 60000,
-                createTimeoutMillis: config.createTimeout || 30000,
-                destroyTimeoutMillis: 5000,
-                reapIntervalMillis: 1000,
-                createRetryIntervalMillis: 200
+                min: config.minConnections || 0,  // Allow pool to be completely idle
+                idleTimeoutMillis: config.idleTimeout || 60000,  // Increased to reduce reconnections
+                // Azure SQL requires much longer timeouts due to potential throttling
+                acquireTimeoutMillis: config.acquireTimeout || (isAzureSql ? 300000 : 120000),  // 5 min Azure, 2 min on-prem
+                createTimeoutMillis: config.createTimeout || (isAzureSql ? 120000 : 45000),  // 2 min Azure, 45s on-prem
+                destroyTimeoutMillis: 5000,  // Timeout for destroying connections
+                reapIntervalMillis: 1000,  // Check for idle connections every second
+                createRetryIntervalMillis: 200,
+                propagateCreateError: false  // Don't propagate errors during pool creation
             }
         };
 
@@ -146,10 +153,20 @@ export class ConnectionPoolManager {
         });
 
         pool.on('error', (err: Error) => {
-            Logger.error(`Pool ${poolKey}: Connection error`, err);
-            // Remove failed pool from our maps
-            this.pools.delete(poolKey);
-            this.poolConfigs.delete(poolKey);
+            const errorMsg = err.message || 'Unknown error';
+
+            // Check if it's a tarn timeout (pool acquisition timeout)
+            if (errorMsg.includes('operation timed out')) {
+                Logger.errorSilent(`Pool ${poolKey}: Pool acquisition timeout - no connections available`, err);
+                // Don't remove pool immediately - it might recover
+            } else {
+                Logger.errorSilent(`Pool ${poolKey}: Connection error`, err);
+                // Only remove pool for critical errors
+                if (errorMsg.includes('ECONNREFUSED') || errorMsg.includes('ENOTFOUND')) {
+                    this.pools.delete(poolKey);
+                    this.poolConfigs.delete(poolKey);
+                }
+            }
         });
     }
 
@@ -193,7 +210,7 @@ export class ConnectionPoolManager {
                 idleTimeout: config.idleTimeout || 30000
             };
         } catch (error) {
-            Logger.error(`Error getting pool stats for ${poolKey}:`, error);
+            Logger.errorSilent(`Error getting pool stats for ${poolKey}:`, error);
             return {
                 poolName: poolKey,
                 connected: pool.connected,
@@ -235,7 +252,7 @@ export class ConnectionPoolManager {
                 Logger.info(`Closing pool: ${poolKey}`);
                 await pool.close();
             } catch (error) {
-                Logger.error(`Error closing pool ${poolKey}:`, error);
+                Logger.errorSilent(`Error closing pool ${poolKey}:`, error);
             } finally {
                 this.pools.delete(poolKey);
                 this.poolConfigs.delete(poolKey);
@@ -254,7 +271,7 @@ export class ConnectionPoolManager {
                 await pool.close();
                 Logger.info(`Pool ${poolKey} closed successfully`);
             } catch (error) {
-                Logger.error(`Error closing pool ${poolKey}:`, error);
+                Logger.errorSilent(`Error closing pool ${poolKey}:`, error);
             }
         });
 
@@ -296,7 +313,7 @@ export class ConnectionPoolManager {
                     health[poolKey] = false;
                 }
             } catch (error) {
-                Logger.error(`Health check failed for pool ${poolKey}:`, error);
+                Logger.errorSilent(`Health check failed for pool ${poolKey}:`, error);
                 health[poolKey] = false;
             }
         }

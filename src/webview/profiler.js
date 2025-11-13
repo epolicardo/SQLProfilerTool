@@ -64,7 +64,13 @@
         });
 
         stopBtn.addEventListener('click', () => {
-            vscode.postMessage({ command: 'stopProfiling' });
+            console.log('Stop button clicked, isRunning:', isRunning, 'button disabled:', stopBtn.disabled);
+            if (!stopBtn.disabled) {
+                console.log('Sending stopProfiling message');
+                vscode.postMessage({ command: 'stopProfiling' });
+            } else {
+                console.log('Stop button is disabled, ignoring click');
+            }
         });
 
         clearBtn.addEventListener('click', () => {
@@ -125,9 +131,17 @@
 
         switch (message.command) {
             case 'updateResults':
+                console.log('=== WEBVIEW RECEIVED RESULTS ===');
+                console.log('Raw message data length:', message.data ? message.data.length : 0);
+                console.log('First 3 events:', message.data ? message.data.slice(0, 3) : 'No data');
+
                 currentResults = message.data || [];
+                console.log('currentResults length after assignment:', currentResults.length);
+
                 updateDatabaseFilter();
                 applyFilters();
+
+                console.log('filteredResults length after applyFilters:', filteredResults.length);
                 break;
 
             case 'updateConnections':
@@ -135,15 +149,23 @@
                 break;
 
             case 'connectionSelected':
-                updateConnectionStatus(`Connected to: ${message.connectionName}`, 'connected');
+                updateConnectionStatus(`Selected connection: ${message.connectionName}`, 'connected');
                 break;
 
             case 'connectionError':
                 updateConnectionStatus(`Error: ${message.error}`, 'error');
                 break;
 
+            case 'profilingStarting':
+                setProfilingState('starting');
+                break;
+
             case 'profilingStarted':
                 setProfilingState(true);
+                break;
+
+            case 'profilingStopping':
+                setProfilingState('stopping');
                 break;
 
             case 'profilingStopped':
@@ -167,9 +189,19 @@
     });
 
     function setProfilingState(running) {
+        console.log('Setting profiling state to:', running);
         isRunning = running;
 
-        if (running) {
+        if (running === 'starting') {
+            console.log('Setting starting state - disabling both buttons');
+            startBtn.disabled = true;
+            stopBtn.disabled = true;
+            statusIcon.className = 'status-icon starting';
+            statusText.textContent = 'Starting...';
+
+            // Don't start auto-refresh yet
+        } else if (running === true) {
+            console.log('Enabling stop button, disabling start button');
             startBtn.disabled = true;
             stopBtn.disabled = false;
             statusIcon.className = 'status-icon running';
@@ -179,7 +211,16 @@
             if (!window.autoRefreshInterval) {
                 window.autoRefreshInterval = setInterval(requestResults, 2000);
             }
+        } else if (running === 'stopping') {
+            console.log('Setting stopping state - disabling both buttons');
+            startBtn.disabled = true;
+            stopBtn.disabled = true;
+            statusIcon.className = 'status-icon stopping';
+            statusText.textContent = 'Stopping...';
+
+            // Keep auto-refresh during stopping process
         } else {
+            console.log('Enabling start button, disabling stop button');
             startBtn.disabled = false;
             stopBtn.disabled = true;
             statusIcon.className = 'status-icon stopped';
@@ -314,7 +355,7 @@
                     <td>${result.databaseName || ''}</td>
                     <td>${result.userName || ''}</td>
                     <td class="${durationClass}">${duration > 0 ? duration.toLocaleString() : ''}</td>
-                    <td title="${escapeHtml(result.statement)}">${escapeHtml(truncateText(result.statement, 100))}</td>
+                    <td class="sql-statement-cell" data-sql="${escapeHtml(result.statement)}">${escapeHtml(truncateText(result.statement, 100))}</td>
                 </tr>
                 <tr class="expanded-content ${expandedClass}" id="${expandedId}">
                     <td colspan="7">
@@ -424,6 +465,50 @@
                 e.stopPropagation();
                 const index = parseInt(this.dataset.index);
                 openSqlInNewTab(index);
+            });
+        });
+
+        // Attach hover listeners to SQL statement cells
+        document.querySelectorAll('.sql-statement-cell').forEach(cell => {
+            let tooltip = null;
+            let hoverTimeout = null;
+
+            cell.addEventListener('mouseenter', function (e) {
+                // Delay para evitar tooltips accidentales
+                hoverTimeout = setTimeout(() => {
+                    const sqlText = this.dataset.sql;
+                    if (!sqlText || sqlText.trim() === '') return;
+
+                    // Crear tooltip
+                    tooltip = document.createElement('div');
+                    tooltip.className = 'sql-tooltip visible';
+                    tooltip.textContent = sqlText;
+
+                    // Posicionar tooltip
+                    this.appendChild(tooltip);
+
+                    // Ajustar posición si se sale de la pantalla
+                    const rect = tooltip.getBoundingClientRect();
+                    if (rect.right > window.innerWidth) {
+                        tooltip.style.left = 'auto';
+                        tooltip.style.right = '0';
+                    }
+                    if (rect.bottom > window.innerHeight) {
+                        tooltip.style.top = 'auto';
+                        tooltip.style.bottom = '100%';
+                    }
+                }, 300);
+            });
+
+            cell.addEventListener('mouseleave', function () {
+                if (hoverTimeout) {
+                    clearTimeout(hoverTimeout);
+                    hoverTimeout = null;
+                }
+                if (tooltip) {
+                    tooltip.remove();
+                    tooltip = null;
+                }
             });
         });
     }

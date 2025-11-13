@@ -1,24 +1,28 @@
 import * as vscode from 'vscode';
 import { SqlProfilerManager } from './profiler/SqlProfilerManager';
 import { ProfilerWebviewProvider } from './webview/ProfilerWebviewProvider';
+import { ProfilerViewProvider } from './views/ProfilerViewProvider';
 import { Logger } from './utils/Logger';
 
 let profilerManager: SqlProfilerManager | undefined;
 let currentPanel: vscode.WebviewPanel | undefined;
+let profilerViewProvider: ProfilerViewProvider | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     // Initialize logger first
     Logger.initialize(context);
     Logger.info('SQL Server Profiler Tool extension is now active!');
 
-    // ⚠️ TEMPORAL WARNING
-    Logger.warn('=== TEMPORAL DEBUG MODE ENABLED ===');
-    Logger.warn('PASSWORDS WILL BE LOGGED TO CONSOLE');
-    Logger.warn('REMEMBER TO REMOVE THIS IN PRODUCTION');
-    Logger.warn('=======================================');
-
     // Initialize the profiler manager
     profilerManager = new SqlProfilerManager(context);
+
+    // Create Status Bar button
+    const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    statusBarItem.text = '$(database) SQL Profiler';
+    statusBarItem.tooltip = 'Click to open SQL Server Profiler';
+    statusBarItem.command = 'sqlProfiler.openProfiler';
+    statusBarItem.show();
+    context.subscriptions.push(statusBarItem);
 
     // Register commands
     registerCommands(context);
@@ -254,14 +258,310 @@ function registerCommands(context: vscode.ExtensionContext) {
             }
         })
     );
+
+    // 🚀 Auto-Reconnect System Commands
+
+    // Show reconnection statistics
+    context.subscriptions.push(
+        vscode.commands.registerCommand('sqlProfiler.showReconnectStats', () => {
+            if (!profilerManager) {
+                vscode.window.showErrorMessage('SQL Profiler is not initialized');
+                return;
+            }
+
+            try {
+                const connectionStatus = profilerManager.getConnectionStatus();
+                const allStats = profilerManager.getAllReconnectStats();
+
+                // Format connection status
+                const statusInfo = [
+                    `**Connection Status**`,
+                    `• Connected: ${connectionStatus.isConnected ? '✅ Yes' : '❌ No'}`,
+                    `• Pool Key: ${connectionStatus.poolKey || 'N/A'}`,
+                    `• Database Type: ${connectionStatus.databaseType || 'Unknown'}`,
+                    `• Last Health Check: ${connectionStatus.lastHealthCheck?.toLocaleString() || 'Never'}`,
+                    ``
+                ];
+
+                // Format pool statistics
+                if (connectionStatus.poolStats) {
+                    const poolStats = connectionStatus.poolStats;
+                    statusInfo.push(
+                        `**Pool Statistics**`,
+                        `• Pool Name: ${poolStats.poolName}`,
+                        `• Connections: ${poolStats.borrowed}/${poolStats.max} (${poolStats.available} available)`,
+                        `• Min/Max: ${poolStats.min}/${poolStats.max}`,
+                        `• Pending: ${poolStats.pending}`,
+                        `• Idle Timeout: ${Math.round(poolStats.idleTimeout / 1000)}s`,
+                        ``
+                    );
+                }
+
+                // Format reconnection statistics
+                if (connectionStatus.reconnectStats) {
+                    const reconnectStats = connectionStatus.reconnectStats;
+                    statusInfo.push(
+                        `**Reconnection Statistics**`,
+                        `• Total Attempts: ${reconnectStats.totalAttempts}`,
+                        `• Consecutive Failures: ${reconnectStats.consecutiveFailures}`,
+                        `• Circuit Breaker: ${reconnectStats.circuitBreakerState}`,
+                        `• Last Success: ${reconnectStats.lastSuccessTime?.toLocaleString() || 'Never'}`,
+                        `• Currently Reconnecting: ${reconnectStats.isReconnecting ? '🔄 Yes' : '✅ No'}`,
+                        ``
+                    );
+                } else {
+                    statusInfo.push(`**Reconnection Statistics**`, `• No reconnection data available`, ``);
+                }
+
+                // Show all pool statistics if multiple pools exist
+                const poolCount = Object.keys(allStats).length;
+                if (poolCount > 1) {
+                    statusInfo.push(`**All Pools (${poolCount} active)**`);
+                    Object.entries(allStats).forEach(([poolKey, stats]: [string, any]) => {
+                        if (stats) {
+                            statusInfo.push(
+                                `• ${poolKey}:`,
+                                `  - Attempts: ${stats.totalAttempts}`,
+                                `  - Circuit Breaker: ${stats.circuitBreakerState}`,
+                                `  - Reconnecting: ${stats.isReconnecting ? 'Yes' : 'No'}`
+                            );
+                        }
+                    });
+                }
+
+                const message = statusInfo.join('\n');
+
+                // Create and show a new document with the statistics
+                vscode.workspace.openTextDocument({
+                    content: message,
+                    language: 'markdown'
+                }).then(doc => {
+                    vscode.window.showTextDocument(doc, {
+                        viewColumn: vscode.ViewColumn.Beside,
+                        preview: true
+                    });
+                });
+
+            } catch (error: any) {
+                vscode.window.showErrorMessage(`Failed to get reconnection statistics: ${error.message}`);
+            }
+        })
+    );
+
+    // Reset circuit breaker
+    context.subscriptions.push(
+        vscode.commands.registerCommand('sqlProfiler.resetCircuitBreaker', () => {
+            if (!profilerManager) {
+                vscode.window.showErrorMessage('SQL Profiler is not initialized');
+                return;
+            }
+
+            try {
+                profilerManager.forceResetCircuitBreaker();
+                vscode.window.showInformationMessage('Circuit breaker has been reset manually');
+            } catch (error: any) {
+                vscode.window.showErrorMessage(`Failed to reset circuit breaker: ${error.message}`);
+            }
+        })
+    );
+
+    // Configure auto-reconnect settings
+    context.subscriptions.push(
+        vscode.commands.registerCommand('sqlProfiler.configureAutoReconnect', async () => {
+            if (!profilerManager) {
+                vscode.window.showErrorMessage('SQL Profiler is not initialized');
+                return;
+            }
+
+            // Show quick pick with common configuration presets
+            const preset = await vscode.window.showQuickPick([
+                {
+                    label: '🏠 Development (Local)',
+                    description: 'Optimized for local SQL Server instances',
+                    detail: 'Fast reconnection, fewer retries, no circuit breaker',
+                    value: 'development'
+                },
+                {
+                    label: '☁️ Azure SQL Database',
+                    description: 'Optimized for Azure SQL Database connections',
+                    detail: 'More retries, circuit breaker enabled, longer delays',
+                    value: 'azure'
+                },
+                {
+                    label: '🏢 SQL Server On-Premise',
+                    description: 'Balanced settings for on-premise SQL Server',
+                    detail: 'Standard retries, circuit breaker enabled',
+                    value: 'onpremise'
+                },
+                {
+                    label: '🔧 Custom Settings',
+                    description: 'Open VS Code settings to configure manually',
+                    detail: 'Fine-tune all reconnection parameters',
+                    value: 'custom'
+                },
+                {
+                    label: '📊 Show Current Settings',
+                    description: 'Display current auto-reconnect configuration',
+                    detail: 'View all current settings and their values',
+                    value: 'show'
+                }
+            ], {
+                placeHolder: 'Select auto-reconnection configuration preset',
+                ignoreFocusOut: true
+            });
+
+            if (!preset) {
+                return;
+            }
+
+            try {
+                switch (preset.value) {
+                    case 'development':
+                        profilerManager.updateAutoReconnectConfig({
+                            maxRetries: 3,
+                            initialDelay: 500,
+                            backoffFactor: 1.5,
+                            maxDelay: 5000,
+                            enableCircuitBreaker: false,
+                            connectionTimeout: 10000
+                        });
+                        vscode.window.showInformationMessage('Auto-reconnect configured for Development (Local)');
+                        break;
+
+                    case 'azure':
+                        profilerManager.updateAutoReconnectConfig({
+                            maxRetries: 8,
+                            initialDelay: 1000,
+                            backoffFactor: 2.0,
+                            maxDelay: 30000,
+                            enableCircuitBreaker: true,
+                            circuitBreakerThreshold: 5,
+                            circuitBreakerCooldown: 60000,
+                            connectionTimeout: 20000
+                        });
+                        vscode.window.showInformationMessage('Auto-reconnect configured for Azure SQL Database');
+                        break;
+
+                    case 'onpremise':
+                        profilerManager.updateAutoReconnectConfig({
+                            maxRetries: 5,
+                            initialDelay: 1000,
+                            backoffFactor: 2.0,
+                            maxDelay: 15000,
+                            enableCircuitBreaker: true,
+                            circuitBreakerThreshold: 3,
+                            circuitBreakerCooldown: 45000,
+                            connectionTimeout: 15000
+                        });
+                        vscode.window.showInformationMessage('Auto-reconnect configured for SQL Server On-Premise');
+                        break;
+
+                    case 'custom':
+                        vscode.commands.executeCommand('workbench.action.openSettings', 'sqlProfiler.autoReconnect');
+                        break;
+
+                    case 'show':
+                        const currentStats = profilerManager.getConnectionStatus();
+                        const configInfo = [
+                            `# Current Auto-Reconnection Configuration`,
+                            ``,
+                            `*Last updated: ${new Date().toLocaleString()}*`,
+                            ``,
+                            `## Connection Status`,
+                            `- **Connected**: ${currentStats.isConnected ? '✅ Yes' : '❌ No'}`,
+                            `- **Pool Key**: ${currentStats.poolKey || 'N/A'}`,
+                            `- **Database Type**: ${currentStats.databaseType || 'Unknown'}`,
+                            ``,
+                            `## Current Settings`,
+                            `To modify these settings, use **Ctrl+Shift+P** → "Configure Auto-Reconnection Settings" → "Custom Settings"`,
+                            ``,
+                            `### Reconnection Behavior`,
+                            `- **Max Retries**: \`sqlProfiler.autoReconnect.maxRetries\``,
+                            `- **Initial Delay**: \`sqlProfiler.autoReconnect.initialDelay\` ms`,
+                            `- **Backoff Factor**: \`sqlProfiler.autoReconnect.backoffFactor\``,
+                            `- **Max Delay**: \`sqlProfiler.autoReconnect.maxDelay\` ms`,
+                            `- **Connection Timeout**: \`sqlProfiler.autoReconnect.connectionTimeout\` ms`,
+                            ``,
+                            `### Circuit Breaker`,
+                            `- **Enabled**: \`sqlProfiler.autoReconnect.enableCircuitBreaker\``,
+                            `- **Failure Threshold**: \`sqlProfiler.autoReconnect.circuitBreakerThreshold\``,
+                            `- **Cooldown Period**: \`sqlProfiler.autoReconnect.circuitBreakerCooldown\` ms`,
+                            ``,
+                            `## Available Presets`,
+                            `1. **Development (Local)** - Fast, minimal retries`,
+                            `2. **Azure SQL Database** - Robust, many retries`,
+                            `3. **SQL Server On-Premise** - Balanced approach`,
+                            ``,
+                            `## Statistics`,
+                            currentStats.reconnectStats ? [
+                                `- **Total Attempts**: ${currentStats.reconnectStats.totalAttempts}`,
+                                `- **Consecutive Failures**: ${currentStats.reconnectStats.consecutiveFailures}`,
+                                `- **Circuit Breaker State**: ${currentStats.reconnectStats.circuitBreakerState}`,
+                                `- **Last Success**: ${currentStats.reconnectStats.lastSuccessTime?.toLocaleString() || 'Never'}`,
+                                `- **Currently Reconnecting**: ${currentStats.reconnectStats.isReconnecting ? '🔄 Yes' : '✅ No'}`
+                            ].join('\n') : `- No reconnection statistics available`
+                        ].join('\n');
+
+                        vscode.workspace.openTextDocument({
+                            content: configInfo,
+                            language: 'markdown'
+                        }).then(doc => {
+                            vscode.window.showTextDocument(doc, {
+                                viewColumn: vscode.ViewColumn.Beside,
+                                preview: true
+                            });
+                        });
+                        break;
+                }
+            } catch (error: any) {
+                vscode.window.showErrorMessage(`Failed to configure auto-reconnect: ${error.message}`);
+            }
+        })
+    );
+
+    // Start profiling with enhanced auto-recovery
+    context.subscriptions.push(
+        vscode.commands.registerCommand('sqlProfiler.startWithAutoRecovery', () => {
+            if (!profilerManager) {
+                vscode.window.showErrorMessage('SQL Profiler is not initialized');
+                return;
+            }
+
+            vscode.window.showInformationMessage('Starting SQL Profiler with enhanced auto-recovery...');
+
+            // This will be available in the SqlProfilerManager
+            (profilerManager as any).startProfilingWithAutoRecovery?.().catch((error: any) => {
+                vscode.window.showErrorMessage(`Failed to start profiling with auto-recovery: ${error.message}`);
+            });
+        })
+    );
+
+    // Azure SQL Database connection diagnostics
+    context.subscriptions.push(
+        vscode.commands.registerCommand('sqlProfiler.diagnoseAzureSQL', async () => {
+            if (!profilerManager) {
+                vscode.window.showErrorMessage('SQL Profiler is not initialized');
+                return;
+            }
+
+            try {
+                await (profilerManager as any).diagnoseAzureSQLConnection?.();
+            } catch (error: any) {
+                vscode.window.showErrorMessage(`Failed to run Azure SQL diagnostics: ${error.message}`);
+            }
+        })
+    );
 }
 
 function handleWebviewMessage(message: any) {
+    console.log('Received webview message:', message.command);
     switch (message.command) {
         case 'startProfiling':
+            console.log('Handling startProfiling command');
             startProfilingFromWebview();
             break;
         case 'stopProfiling':
+            console.log('Handling stopProfiling command');
             stopProfilingFromWebview();
             break;
         case 'clearResults':
@@ -270,6 +570,18 @@ function handleWebviewMessage(message: any) {
         case 'getResults':
             if (profilerManager && currentPanel) {
                 const results = profilerManager.getResults();
+                console.log('=== EXTENSION SENDING RESULTS ===');
+                console.log('Results to send:', results.length);
+                console.log('First result sample:', results[0] ? {
+                    timestamp: results[0].timestamp,
+                    eventName: results[0].eventName,
+                    statement: results[0].statement?.substring(0, 50) + '...'
+                } : 'No results');
+
+                // FUTURE ENHANCEMENT: Update sidebar view with event count (disabled for now)
+                // const isRunning = (profilerManager as any).isRunning || false;
+                // profilerViewProvider?.updateStatus(isRunning, undefined, results.length);
+
                 currentPanel.webview.postMessage({
                     command: 'updateResults',
                     data: results
@@ -392,14 +704,27 @@ async function startProfilingFromWebview() {
     }
 
     try {
+        // Show immediate notification to user
+        vscode.window.showInformationMessage('SQL Server profiler is starting...');
+
+        // Update webview to show starting status
+        console.log('Sending profilingStarting message to webview');
+        currentPanel.webview.postMessage({
+            command: 'profilingStarting'
+        });
+
+        console.log('Calling profilerManager.startProfiling()');
         await profilerManager.startProfiling();
+        console.log('Profiling started successfully');
         vscode.window.showInformationMessage('SQL Server profiling started');
 
+        console.log('Sending profilingStarted message to webview');
         currentPanel.webview.postMessage({
             command: 'profilingStarted'
         });
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        console.error('Error starting profiling:', error);
         vscode.window.showErrorMessage(`Failed to start profiling: ${errorMessage}`);
 
         currentPanel.webview.postMessage({
@@ -410,19 +735,34 @@ async function startProfilingFromWebview() {
 }
 
 async function stopProfilingFromWebview() {
+    console.log('stopProfilingFromWebview called');
     if (!profilerManager || !currentPanel) {
+        console.log('No profilerManager or currentPanel available');
         return;
     }
 
     try {
+        // Show immediate notification to user
+        vscode.window.showInformationMessage('SQL Server profiler is stopping...');
+
+        // Update webview to show stopping status
+        console.log('Sending profilingStopping message to webview');
+        currentPanel.webview.postMessage({
+            command: 'profilingStopping'
+        });
+
+        console.log('Calling profilerManager.stopProfiling()');
         await profilerManager.stopProfiling();
+        console.log('Profiling stopped successfully');
         vscode.window.showInformationMessage('SQL Server profiling stopped');
 
+        console.log('Sending profilingStopped message to webview');
         currentPanel.webview.postMessage({
             command: 'profilingStopped'
         });
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        console.error('Error stopping profiling:', error);
         vscode.window.showErrorMessage(`Failed to stop profiling: ${errorMessage}`);
     }
 }
