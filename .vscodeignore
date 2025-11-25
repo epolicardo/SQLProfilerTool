@@ -1,0 +1,57 @@
+# Source TypeScript files (but keep webview assets)
+src/**/*.ts
+src/**/tsconfig.json
+src/**/*.map
+.vscode/**
+.vscode-test/**
+
+# Keep webview files (CSS, JS)
+!src/webview/**/*.css
+!src/webview/**/*.js
+!src/webview/**/*.html
+
+# Build files
+tsconfig.json
+.eslintrc.json
+
+# Documentation
+Documentation/**
+*.md
+!README.md
+!CHANGELOG.md
+!LICENSE
+
+# Test files
+test-*.sql
+diagnostic-*.sql
+debug-*.md
+
+# Git
+.git
+.gitignore
+.github
+
+# Development
+node_modules/**/.bin
+*.vsix
+*.code-workspace
+*.log
+
+# Scripts
+scripts/**
+
+# Old releases
+sql-server-profiler-tool-*.vsix
+sql-server-profiler-tool-*/**
+
+# Debug and temp files
+profiler-results.json
+vscode-app-*.log
+
+# Keep only necessary files
+!out/**
+!resources/**
+!LICENSE
+!README.md
+!package.json
+!CHANGELOG.md

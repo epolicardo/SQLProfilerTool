@@ -1,26 +1,22 @@
-import * as vscode from 'vscode';
-
-export class ProfilerWebviewProvider {
-    constructor(
-        private readonly context: vscode.ExtensionContext,
-        private readonly panel: vscode.WebviewPanel
-    ) { }
-
-    public getWebviewContent(): string {
-        const scriptUri = this.panel.webview.asWebviewUri(
-            vscode.Uri.joinPath(this.context.extensionUri, 'src', 'webview', 'profiler.js')
-        );
-        const styleUri = this.panel.webview.asWebviewUri(
-            vscode.Uri.joinPath(this.context.extensionUri, 'src', 'webview', 'profiler.css')
-        );
-
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ProfilerWebviewProvider = void 0;
+const vscode = require("vscode");
+class ProfilerWebviewProvider {
+    constructor(context, panel) {
+        this.context = context;
+        this.panel = panel;
+    }
+    getWebviewContent() {
+        const scriptUri = this.panel.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'src', 'webview', 'profiler.js'));
+        const styleUri = this.panel.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'src', 'webview', 'profiler.css'));
         return `
             <!DOCTYPE html>
             <html lang="en">
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${this.panel.webview.cspSource} 'unsafe-inline'; script-src ${this.panel.webview.cspSource} 'unsafe-inline'; img-src ${this.panel.webview.cspSource} data:; font-src ${this.panel.webview.cspSource};">
+                <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${this.panel.webview.cspSource} 'unsafe-inline'; script-src ${this.panel.webview.cspSource};">
                 <link rel="stylesheet" href="${styleUri}">
                 <title>SQL Server Profiler</title>
             </head>
@@ -109,3 +105,5 @@ export class ProfilerWebviewProvider {
         `;
     }
 }
+exports.ProfilerWebviewProvider = ProfilerWebviewProvider;
+//# sourceMappingURL=ProfilerWebviewProvider.js.map

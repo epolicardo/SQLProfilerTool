@@ -1,8 +1,8 @@
 {
   "name": "sql-server-profiler-tool",
   "displayName": "SQL Server Profiler Tool",
-  "description": "SQL Server profiler extension using Extended Events for real-time query capture and analysis with advanced connection pooling, auto-reconnection system, and persistent UI state",
-  "version": "0.3.7",
+  "description": "SQL Server profiler extension using Extended Events for real-time query capture and analysis with connection pooling and persistent UI state",
+  "version": "0.2.8",
   "publisher": "epolicardo",
   "engines": {
     "vscode": "^1.74.0"
@@ -16,12 +16,7 @@
     "profiler",
     "extended events",
     "database",
-    "performance",
-    "auto-reconnection",
-    "connection pooling",
-    "circuit breaker",
-    "azure sql",
-    "reliability"
+    "performance"
   ],
   "activationEvents": [],
   "main": "./out/extension.js",
@@ -80,36 +75,6 @@
         "title": "Show Connections with Stored Passwords",
         "category": "SQL Profiler",
         "icon": "$(list-unordered)"
-      },
-      {
-        "command": "sqlProfiler.showReconnectStats",
-        "title": "Show Auto-Reconnection Statistics",
-        "category": "SQL Profiler",
-        "icon": "$(pulse)"
-      },
-      {
-        "command": "sqlProfiler.resetCircuitBreaker",
-        "title": "Reset Connection Circuit Breaker",
-        "category": "SQL Profiler",
-        "icon": "$(debug-restart)"
-      },
-      {
-        "command": "sqlProfiler.configureAutoReconnect",
-        "title": "Configure Auto-Reconnection Settings",
-        "category": "SQL Profiler",
-        "icon": "$(settings-gear)"
-      },
-      {
-        "command": "sqlProfiler.startWithAutoRecovery",
-        "title": "Start Profiling with Enhanced Auto-Recovery",
-        "category": "SQL Profiler",
-        "icon": "$(shield)"
-      },
-      {
-        "command": "sqlProfiler.diagnoseAzureSQL",
-        "title": "Diagnose Azure SQL Database Connection",
-        "category": "SQL Profiler",
-        "icon": "$(pulse)"
       }
     ],
     "menus": {
@@ -140,21 +105,6 @@
         },
         {
           "command": "sqlProfiler.showStoredPasswords"
-        },
-        {
-          "command": "sqlProfiler.showReconnectStats"
-        },
-        {
-          "command": "sqlProfiler.resetCircuitBreaker"
-        },
-        {
-          "command": "sqlProfiler.configureAutoReconnect"
-        },
-        {
-          "command": "sqlProfiler.startWithAutoRecovery"
-        },
-        {
-          "command": "sqlProfiler.diagnoseAzureSQL"
         }
       ]
     },
@@ -242,76 +192,6 @@
               "default": 30000,
               "minimum": 10000,
               "description": "Interval in milliseconds for health check execution"
-            }
-          }
-        },
-        "sqlProfiler.autoReconnect": {
-          "type": "object",
-          "default": {
-            "maxRetries": 5,
-            "initialDelay": 1000,
-            "backoffFactor": 2.0,
-            "maxDelay": 30000,
-            "connectionTimeout": 15000,
-            "enableCircuitBreaker": true,
-            "circuitBreakerThreshold": 3,
-            "circuitBreakerCooldown": 60000
-          },
-          "description": "Auto-reconnection system configuration",
-          "properties": {
-            "maxRetries": {
-              "type": "number",
-              "default": 5,
-              "minimum": 1,
-              "maximum": 20,
-              "description": "Maximum number of reconnection attempts before giving up"
-            },
-            "initialDelay": {
-              "type": "number",
-              "default": 1000,
-              "minimum": 100,
-              "maximum": 10000,
-              "description": "Initial delay between reconnection attempts in milliseconds"
-            },
-            "backoffFactor": {
-              "type": "number",
-              "default": 2.0,
-              "minimum": 1.0,
-              "maximum": 5.0,
-              "description": "Exponential backoff factor for reconnection delays"
-            },
-            "maxDelay": {
-              "type": "number",
-              "default": 30000,
-              "minimum": 1000,
-              "maximum": 300000,
-              "description": "Maximum delay between reconnection attempts in milliseconds"
-            },
-            "connectionTimeout": {
-              "type": "number",
-              "default": 15000,
-              "minimum": 5000,
-              "maximum": 60000,
-              "description": "Timeout for each reconnection attempt in milliseconds"
-            },
-            "enableCircuitBreaker": {
-              "type": "boolean",
-              "default": true,
-              "description": "Enable circuit breaker to prevent excessive reconnection attempts"
-            },
-            "circuitBreakerThreshold": {
-              "type": "number",
-              "default": 3,
-              "minimum": 1,
-              "maximum": 10,
-              "description": "Number of consecutive failures before opening the circuit breaker"
-            },
-            "circuitBreakerCooldown": {
-              "type": "number",
-              "default": 60000,
-              "minimum": 10000,
-              "maximum": 600000,
-              "description": "Time to wait before attempting to close the circuit breaker in milliseconds"
             }
           }
         }

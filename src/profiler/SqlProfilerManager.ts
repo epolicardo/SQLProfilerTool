@@ -59,6 +59,7 @@ export class SqlProfilerManager {
     private lastEventReceivedTime: number = 0; // Track when last event was received
     private eventIdCounter = 0; // Incremental counter for guaranteed unique IDs
     private detectedDatabaseType: 'azure' | 'sqlserver' | null = null; // Cached DB type for session
+    private profilerStartTime: number = 0; // ⏱️ Track when profiler started for latency measurement
 
     // Cache for database type detection to avoid repeated queries
     private databaseTypeCache: Map<string, { isAzure: boolean; timestamp: number }> = new Map();
@@ -190,11 +191,13 @@ export class SqlProfilerManager {
             await this.startXESession();
 
             this.isProfilering = true;
+            this.profilerStartTime = Date.now(); // ⏱️ Start timing for first event latency
 
             // ⏱️ Configure polling interval based on platform
             const isAzure = await this.isAzureSqlDatabase(this.pool!);
             this.pollingIntervalMs = isAzure ? 250 : 500; // Faster for Azure ring_buffer
             console.log(`⏱️ Polling configured: ${this.pollingIntervalMs}ms for ${isAzure ? 'Azure SQL' : 'SQL Server'}`);
+            console.log(`⏱️ Profiler started at: ${new Date(this.profilerStartTime).toISOString()}`);
 
             // Start polling for results
             console.log('Starting polling for results...');
@@ -268,6 +271,7 @@ export class SqlProfilerManager {
         this.detectedDatabaseType = null; // Reset for next session
         this.lastAzureTimestamp = null; // Reset Azure sliding window
         this.lastReadTimestamp = null; // Reset SQL Server streaming
+        this.profilerStartTime = 0; // Reset profiler start time
         Logger.info('Profiling stopped successfully - database type cache and timestamps cleared');
     }
 
@@ -1193,7 +1197,7 @@ export class SqlProfilerManager {
                     : 'First read - no filter');
 
                 query = `
-                    SELECT TOP 500
+                    SELECT TOP 50
                         event_data.value('(@timestamp)[1]', 'datetime2') AS event_timestamp,
                         event_data.value('(@name)[1]', 'varchar(50)') AS event_name,
                         
@@ -1304,60 +1308,9 @@ export class SqlProfilerManager {
                 console.error('Error number:', queryError.number);
                 console.error('Error details:', queryError);
 
-                // Try to get raw XML first to diagnose the structure
-                try {
-                    const isAzure = await this.isAzureSqlDatabase(currentPool);
-                    const sessionView = isAzure ? 'sys.dm_xe_database_sessions' : 'sys.dm_xe_sessions';
-                    const sessionTargetView = isAzure ? 'sys.dm_xe_database_session_targets' : 'sys.dm_xe_session_targets';
-
-                    const xmlQuery = `
-                        SELECT TOP 1
-                            CAST(target_data AS nvarchar(max)) AS xml_text,
-                            LEN(CAST(target_data AS nvarchar(max))) AS xml_length
-                        FROM ${sessionTargetView} AS t 
-                        JOIN ${sessionView} AS s ON s.address = t.event_session_address
-                        WHERE s.name = '${this.sessionName}' AND t.target_name = 'ring_buffer'
-                    `;
-
-                    const xmlResult = await currentPool.request().query(xmlQuery);
-                    if (xmlResult.recordset.length > 0) {
-                        console.log('Raw XML length:', xmlResult.recordset[0].xml_length);
-                        console.log('Raw XML sample (first 2000 chars):', xmlResult.recordset[0].xml_text.substring(0, 2000));
-                    }
-                } catch (xmlError) {
-                    console.error('Could not retrieve XML:', xmlError);
-                }
-
-                // Fallback to simpler query 
-                console.log('Trying simplified fallback query...');
-                const simpleQuery = `
-                    SELECT TOP 20
-                        event_data.value('(@name)[1]', 'varchar(100)') AS event_name,
-                        event_data.value('(@timestamp)[1]', 'datetime2') AS event_timestamp,
-                        COALESCE(
-                            event_data.value('(data[@name="statement"]/value)[1]', 'nvarchar(max)'),
-                            event_data.value('(data[@name="batch_text"]/value)[1]', 'nvarchar(max)'),
-                            'Fallback - No SQL Text'
-                        ) AS statement_text,
-                        ISNULL(event_data.value('(data[@name="duration"]/value)[1]', 'bigint'), 0) AS duration_microseconds,
-                        DB_NAME() AS database_name,
-                        SYSTEM_USER AS username,
-                        'Extended Events Fallback' AS application_name
-                    FROM (
-                        SELECT CAST(target_data AS XML) AS target_data
-                        FROM ${isAzure ? 'sys.dm_xe_database_session_targets' : 'sys.dm_xe_session_targets'} AS t 
-                        JOIN ${isAzure ? 'sys.dm_xe_database_sessions' : 'sys.dm_xe_sessions'} AS s ON s.address = t.event_session_address
-                        WHERE s.name = '${this.sessionName}' AND t.target_name = 'ring_buffer'
-                    ) AS data
-                    CROSS APPLY target_data.nodes('RingBufferTarget/event') AS events(event_data)
-                    WHERE event_data.value('(@timestamp)[1]', 'datetime2') > DATEADD(minute, -2, GETUTCDATE())
-                    ORDER BY event_timestamp DESC
-                `;
-
-                // 🔧 Create fallback request
-                const fallbackRequest = currentPool.request();
-                result = await fallbackRequest.query(simpleQuery);
-                console.log('Fallback query succeeded with', result.recordset.length, 'records');
+                // Don't use fallback - it creates noise. Log error and rethrow
+                Logger.errorSilent('Extended Events query failed:', queryError);
+                throw queryError;
             }
 
             // Debug logging
@@ -1466,6 +1419,13 @@ export class SqlProfilerManager {
                 const newestEvent = filteredNewEvents[0];
                 const eventTime = new Date(newestEvent.timestamp).getTime();
                 const latencyMs = now - eventTime;
+                
+                // ⏱️ Log time from profiler start to first events (only for first batch)
+                if (this.lastEventReceivedTime === 0 && this.profilerStartTime > 0) {
+                    const timeFromStart = now - this.profilerStartTime;
+                    console.log(`⏱️ FIRST EVENTS RECEIVED | Time from profiler start: ${timeFromStart}ms (${(timeFromStart/1000).toFixed(2)}s)`);
+                }
+                
                 console.log(`✅ ${filteredNewEvents.length} new event(s) | Latency: ${latencyMs}ms | App: ${newestEvent.applicationName}`);
                 this.lastEventReceivedTime = now;
             }
@@ -1702,7 +1662,12 @@ export class SqlProfilerManager {
                 event_data.value('(data[@name="batch_text"]/value)[1]', 'nvarchar(max)'),
                 event_data.value('(data[@name="sql_text"]/value)[1]', 'nvarchar(max)'),
                 ''
-            ) NOT LIKE '%VSCodeProfilerSession%'`;
+            ) NOT LIKE '%VSCodeProfilerSession%'
+            AND COALESCE(
+                event_data.value('(data[@name="statement"]/value)[1]', 'nvarchar(max)'),
+                event_data.value('(data[@name="batch_text"]/value)[1]', 'nvarchar(max)'),
+                ''
+            ) NOT LIKE '%''VSCodeProfilerSession''%'`;
 
         const additionalFilters = `
             -- Exclude common profiler maintenance queries
@@ -1715,7 +1680,22 @@ export class SqlProfilerManager {
                 event_data.value('(data[@name="statement"]/value)[1]', 'nvarchar(max)'),
                 event_data.value('(data[@name="batch_text"]/value)[1]', 'nvarchar(max)'),
                 ''
-            ) NOT LIKE '%RingBufferTarget%'`;
+            ) NOT LIKE '%RingBufferTarget%'
+            AND COALESCE(
+                event_data.value('(data[@name="statement"]/value)[1]', 'nvarchar(max)'),
+                event_data.value('(data[@name="batch_text"]/value)[1]', 'nvarchar(max)'),
+                ''
+            ) NOT LIKE '%sys.fn_xe_file_target_read_file%'
+            AND COALESCE(
+                event_data.value('(data[@name="statement"]/value)[1]', 'nvarchar(max)'),
+                event_data.value('(data[@name="batch_text"]/value)[1]', 'nvarchar(max)'),
+                ''
+            ) NOT LIKE '%CAST(target_data AS XML)%'
+            AND COALESCE(
+                event_data.value('(data[@name="statement"]/value)[1]', 'nvarchar(max)'),
+                event_data.value('(data[@name="batch_text"]/value)[1]', 'nvarchar(max)'),
+                ''
+            ) NOT LIKE '%event_data.value%'`;
 
         const connectionTestFilters = `
             -- 🛡️ Exclude common connection validation queries
@@ -1800,11 +1780,16 @@ export class SqlProfilerManager {
                 ''
             ) NOT LIKE '%SET NOCOUNT%'`;
 
-        // ✅ Enable comprehensive filters to keep UI clean
-        const filters = `AND ${appNameFilter} ${sessionNameFilter} ${additionalFilters} ${connectionTestFilters} ${nodeMssqlDriverFilters}`;
+        // ✅ Enable ALL comprehensive filters to keep UI clean
+        const filters = `${appNameFilter} ${sessionNameFilter} ${additionalFilters} ${connectionTestFilters} ${nodeMssqlDriverFilters}`;
 
-        console.log('=== ANTI-RECURSION FILTERS ENABLED ===');
-        console.log('Filtering out: Profiler queries, Extended Events, connection tests, driver SET statements');
+        console.log('=== ANTI-RECURSION FILTERS FULLY ENABLED ===');
+        console.log('Filtering out:');
+        console.log('  - Profiler queries (SELECT TOP 50 from ring_buffer)');
+        console.log('  - Extended Events queries (sys.dm_xe_*)');
+        console.log('  - Connection tests (SELECT 1, SELECT @@VERSION)');
+        console.log('  - Driver SET statements (SET ANSI_*, SET QUOTED_IDENTIFIER, etc.)');
+        console.log('  - Session validation (sys.database_event_sessions, sys.server_event_sessions)');
 
         return filters;
     }

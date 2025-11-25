@@ -1,12 +1,10 @@
 import * as vscode from 'vscode';
 import { SqlProfilerManager } from './profiler/SqlProfilerManager';
 import { ProfilerWebviewProvider } from './webview/ProfilerWebviewProvider';
-import { ProfilerViewProvider } from './views/ProfilerViewProvider';
 import { Logger } from './utils/Logger';
 
 let profilerManager: SqlProfilerManager | undefined;
 let currentPanel: vscode.WebviewPanel | undefined;
-let profilerViewProvider: ProfilerViewProvider | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     // Initialize logger first
@@ -148,8 +146,10 @@ function registerCommands(context: vscode.ExtensionContext) {
                     {
                         enableScripts: true,
                         retainContextWhenHidden: true,
+                        enableFindWidget: true,
                         localResourceRoots: [
-                            vscode.Uri.joinPath(context.extensionUri, 'src', 'webview')
+                            vscode.Uri.joinPath(context.extensionUri, 'src', 'webview'),
+                            vscode.Uri.joinPath(context.extensionUri)
                         ]
                     }
                 );
