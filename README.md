@@ -1,3 +1,12 @@
+## 📊 Telemetry & Privacy
+
+This extension collects **anonymous telemetry** about usage and errors to help improve quality and reliability. No personal data, SQL queries, connection strings, usernames, or sensitive information is ever collected.
+
+- You can disable telemetry from VS Code settings: `sqlProfiler.telemetryEnabled` or from VS Code's global privacy settings.
+- Telemetry follows best privacy practices and only sends anonymous events and sanitized errors.
+- For more details and implementation steps, see `Documentation/TELEMETRIA-IMPLEMENTACION-PASO-A-PASO.md`.
+
+**Your privacy is a priority.**
 # SQL Server Profiler Tool
 
 [![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)](https://marketplace.visualstudio.com/items?itemName=epolicardo.sql-server-profiler-tool)

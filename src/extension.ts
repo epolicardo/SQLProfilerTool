@@ -1,7 +1,9 @@
+
 import * as vscode from 'vscode';
 import { SqlProfilerManager } from './profiler/SqlProfilerManager';
 import { ProfilerWebviewProvider } from './webview/ProfilerWebviewProvider';
 import { Logger } from './utils/Logger';
+import { TelemetryService } from './utils/TelemetryService';
 
 let profilerManager: SqlProfilerManager | undefined;
 let currentPanel: vscode.WebviewPanel | undefined;
@@ -10,6 +12,20 @@ export function activate(context: vscode.ExtensionContext) {
     // Initialize logger first
     Logger.initialize(context);
     Logger.info('SQL Server Profiler Tool extension is now active!');
+
+    // --- TelemetryService: inicialización segura ---
+    try {
+        // TODO: Reemplazar por tu Application Insights Key real
+        const aiKey = process.env.APPINSIGHTS_INSTRUMENTATIONKEY || '';
+        if (aiKey) {
+            TelemetryService.initialize(context, aiKey);
+            TelemetryService.getInstance()?.sendEvent('extensionActivated');
+        } else {
+            Logger.info('Telemetry not initialized: No Application Insights key found.');
+        }
+    } catch (err) {
+        Logger.error('Error initializing telemetry: ' + (err instanceof Error ? err.message : String(err)));
+    }
 
     // Initialize the profiler manager
     profilerManager = new SqlProfilerManager(context);
@@ -133,9 +149,38 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 function registerCommands(context: vscode.ExtensionContext) {
+    // Command to change profiler mode (default/ads)
+    context.subscriptions.push(
+        vscode.commands.registerCommand('sqlProfiler.changeProfilerMode', async () => {
+            const config = vscode.workspace.getConfiguration('sqlProfiler');
+            const currentMode = config.get<string>('profilerMode', 'default');
+            const options = [
+                { label: 'Default (Extension Logic)', value: 'default', description: 'Use the extension\'s own event capture and filters.' },
+                { label: 'ADS Compatible', value: 'ads', description: 'Use the same event capture and mapping as Azure Data Studio Profiler.' }
+            ];
+            const selected = await vscode.window.showQuickPick(options, {
+                placeHolder: `Current mode: ${currentMode === 'ads' ? 'ADS Compatible' : 'Default (Extension Logic)'}`,
+                ignoreFocusOut: true
+            });
+            if (selected && selected.value !== currentMode) {
+                await config.update('profilerMode', selected.value, vscode.ConfigurationTarget.Global);
+                // Telemetry: mode change
+                const telemetry = TelemetryService.getInstance();
+                telemetry?.sendEvent('profilerModeChanged', {
+                    previousMode: currentMode,
+                    newMode: selected.value
+                });
+                vscode.window.showInformationMessage(`Profiler mode changed to: ${selected.label}`);
+            } else if (selected) {
+                vscode.window.showInformationMessage(`Profiler mode is already set to: ${selected.label}`);
+            }
+        })
+    );
     // Open Profiler command
     context.subscriptions.push(
         vscode.commands.registerCommand('sqlProfiler.openProfiler', () => {
+            const telemetry = TelemetryService.getInstance();
+            telemetry?.sendEvent('openProfiler');
             if (currentPanel) {
                 currentPanel.reveal(vscode.ViewColumn.One);
             } else {
@@ -179,8 +224,10 @@ function registerCommands(context: vscode.ExtensionContext) {
     // Start profiling command
     context.subscriptions.push(
         vscode.commands.registerCommand('sqlProfiler.startProfiling', async () => {
+            const telemetry = TelemetryService.getInstance();
             if (!profilerManager) {
                 vscode.window.showErrorMessage('Profiler not initialized');
+                telemetry?.sendError('startProfiling.error', new Error('Profiler not initialized'));
                 return;
             }
 
@@ -204,6 +251,7 @@ function registerCommands(context: vscode.ExtensionContext) {
 
                 await profilerManager.startProfiling();
                 vscode.window.showInformationMessage('SQL Server profiling started');
+                telemetry?.sendEvent('startProfiling');
 
                 // Update webview if open
                 if (currentPanel) {
@@ -213,6 +261,7 @@ function registerCommands(context: vscode.ExtensionContext) {
                 }
             } catch (error) {
                 vscode.window.showErrorMessage(`Failed to start profiling: ${error}`);
+                telemetry?.sendError('startProfiling.error', error instanceof Error ? error : new Error(String(error)));
             }
         })
     );
@@ -220,14 +269,17 @@ function registerCommands(context: vscode.ExtensionContext) {
     // Stop profiling command
     context.subscriptions.push(
         vscode.commands.registerCommand('sqlProfiler.stopProfiling', async () => {
+            const telemetry = TelemetryService.getInstance();
             if (!profilerManager) {
                 vscode.window.showErrorMessage('Profiler not initialized');
+                telemetry?.sendError('stopProfiling.error', new Error('Profiler not initialized'));
                 return;
             }
 
             try {
                 await profilerManager.stopProfiling();
                 vscode.window.showInformationMessage('SQL Server profiling stopped');
+                telemetry?.sendEvent('stopProfiling');
 
                 // Update webview if open
                 if (currentPanel) {
@@ -237,6 +289,7 @@ function registerCommands(context: vscode.ExtensionContext) {
                 }
             } catch (error) {
                 vscode.window.showErrorMessage(`Failed to stop profiling: ${error}`);
+                telemetry?.sendError('stopProfiling.error', error instanceof Error ? error : new Error(String(error)));
             }
         })
     );
@@ -244,6 +297,8 @@ function registerCommands(context: vscode.ExtensionContext) {
     // Clear results command
     context.subscriptions.push(
         vscode.commands.registerCommand('sqlProfiler.clearResults', () => {
+            const telemetry = TelemetryService.getInstance();
+            telemetry?.sendEvent('clearResults');
             if (profilerManager) {
                 profilerManager.clearResults();
 
@@ -625,6 +680,13 @@ async function exportResults() {
     if (uri) {
         const content = JSON.stringify(results, null, 2);
         await vscode.workspace.fs.writeFile(uri, Buffer.from(content));
+
+        // Telemetry: results exported
+        const telemetry = TelemetryService.getInstance();
+        telemetry?.sendMetric('resultsExported', results.length, {
+            format: uri.path.endsWith('.json') ? 'json' : 'other'
+        });
+
         vscode.window.showInformationMessage(`Results exported to ${uri.fsPath}`);
     }
 }
@@ -662,6 +724,12 @@ async function setConnection(connectionName: string) {
 
 async function openSqlInNewTab(sqlContent: string, metadata: any) {
     try {
+        // Telemetry: open SQL in new tab
+        const telemetry = TelemetryService.getInstance();
+        telemetry?.sendEvent('sqlOpenedInNewTab', {
+            eventType: metadata?.eventName || 'unknown'
+        });
+
         // Create a new untitled document with SQL content
         const doc = await vscode.workspace.openTextDocument({
             content: sqlContent,
@@ -784,6 +852,9 @@ function clearResultsFromWebview() {
 
 export async function deactivate() {
     try {
+        // Send telemetry before disposing
+        TelemetryService.getInstance()?.sendEvent('extensionDeactivated');
+
         if (profilerManager) {
             // Dispose del profiler manager primero
             await profilerManager.dispose();
@@ -795,6 +866,9 @@ export async function deactivate() {
 
             Logger.info('Extension deactivated successfully - all resources cleaned up');
         }
+
+        // Dispose telemetry service last
+        TelemetryService.getInstance()?.dispose();
     } catch (error) {
         Logger.error('Error during extension deactivation:', error);
         // Asegurar que el error no impida la desactivación

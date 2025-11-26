@@ -51,9 +51,20 @@ export class ConnectionPoolManager {
 
     /**
      * Gets or creates a connection pool for the given configuration
+     * Will recreate pool if configuration has changed
      */
     async getPool(config: PoolConfig): Promise<sql.ConnectionPool> {
         const poolKey = this.generatePoolKey(config);
+
+        // Check if we have an existing pool with potentially outdated config
+        // Look for pools with same server/db/user but different key (config changed)
+        const baseKey = `${config.poolName || 'default'}_${config.server}_${config.database}_${config.user || 'integrated'}`;
+        for (const [existingKey, existingPool] of this.pools.entries()) {
+            if (existingKey.startsWith(baseKey.replace(/[^a-zA-Z0-9_]/g, '_')) && existingKey !== poolKey) {
+                Logger.info(`Configuration changed for ${baseKey}, invalidating old pool: ${existingKey}`);
+                await this.closePool(existingKey);
+            }
+        }
 
         // Return existing pool if it exists and is connected
         if (this.pools.has(poolKey)) {
@@ -70,7 +81,7 @@ export class ConnectionPoolManager {
         }
 
         // Create new pool
-        Logger.info(`Creating new connection pool: ${poolKey}`);
+        Logger.info(`Creating new connection pool with current configuration: ${poolKey}`);
         const pool = await this.createNewPool(config, poolKey);
 
         return pool;
@@ -91,6 +102,8 @@ export class ConnectionPoolManager {
             user: config.user,
             password: config.password,
             port: config.port,
+            // Unique app name for profiler identification and filtering
+            appName: 'SQL Profiler Tool for VS Code',
             // Ensure encrypt and trustServerCertificate are boolean values
             encrypt: config.encrypt !== undefined ? Boolean(config.encrypt) : false,
             trustServerCertificate: config.trustServerCertificate !== undefined ? Boolean(config.trustServerCertificate) : true,
@@ -172,14 +185,18 @@ export class ConnectionPoolManager {
 
     /**
      * Generates a unique key for the pool based on connection parameters
+     * Includes critical config that should trigger pool recreation if changed
      */
     private generatePoolKey(config: PoolConfig): string {
         const server = config.server || 'localhost';
         const database = config.database || 'master';
         const user = config.user || 'integrated';
         const poolName = config.poolName || 'default';
+        // Include encrypt and trustServerCertificate to detect config changes
+        const encrypt = config.encrypt !== undefined ? config.encrypt : false;
+        const trustCert = config.trustServerCertificate !== undefined ? config.trustServerCertificate : true;
 
-        return `${poolName}_${server}_${database}_${user}`.replace(/[^a-zA-Z0-9_]/g, '_');
+        return `${poolName}_${server}_${database}_${user}_enc${encrypt}_trust${trustCert}`.replace(/[^a-zA-Z0-9_]/g, '_');
     }
 
     /**
@@ -258,6 +275,17 @@ export class ConnectionPoolManager {
                 this.poolConfigs.delete(poolKey);
             }
         }
+    }
+
+    /**
+     * Invalidates and closes a pool for a specific configuration
+     * Forces recreation on next getPool() call
+     * Use when configuration changes require a new connection
+     */
+    async invalidatePoolForConfig(config: PoolConfig): Promise<void> {
+        const poolKey = this.generatePoolKey(config);
+        Logger.info(`Invalidating pool for config changes: ${poolKey}`);
+        await this.closePool(poolKey);
     }
 
     /**

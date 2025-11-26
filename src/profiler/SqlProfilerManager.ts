@@ -199,6 +199,16 @@ export class SqlProfilerManager {
             console.log(`⏱️ Polling configured: ${this.pollingIntervalMs}ms for ${isAzure ? 'Azure SQL' : 'SQL Server'}`);
             console.log(`⏱️ Profiler started at: ${new Date(this.profilerStartTime).toISOString()}`);
 
+            // Telemetry: profiling started with server type
+            const { TelemetryService } = await import('../utils/TelemetryService');
+            const telemetry = TelemetryService.getInstance();
+            const sessionStartTime = Date.now();
+            telemetry?.sendEvent('profilingSessionStarted', {
+                serverType: isAzure ? 'azure' : 'sqlserver',
+                pollingInterval: this.pollingIntervalMs.toString(),
+                profilerMode: vscode.workspace.getConfiguration('sqlProfiler').get<string>('profilerMode', 'default')
+            });
+
             // Start polling for results
             console.log('Starting polling for results...');
             this.startPolling();
@@ -227,12 +237,27 @@ export class SqlProfilerManager {
             return;
         }
 
+        // Calculate session metrics before cleanup
+        const sessionDuration = this.profilerStartTime ? Date.now() - this.profilerStartTime : 0;
+        const totalEvents = this.results.length;
+
+        // Telemetry: profiling session ended
+        const { TelemetryService } = await import('../utils/TelemetryService');
+        const telemetry = TelemetryService.getInstance();
+        telemetry?.sendMetric('profilingSessionDuration', Math.round(sessionDuration / 1000), {
+            serverType: this.detectedDatabaseType || 'unknown'
+        });
+        telemetry?.sendMetric('profilingSessionEventCount', totalEvents, {
+            serverType: this.detectedDatabaseType || 'unknown'
+        });
+
         // Set flags first to prevent new polling attempts
         this.isProfilering = false;
         this.hasRunInitialDiagnostics = false; // Reset for next profiling session
         this.isCollectingResults = false; // Reset semaphore
         this.lastReadTimestamp = null; // Reset streaming timestamp
         this.eventIdCounter = 0; // Reset ID counter for fresh session
+        this.profilerStartTime = 0; // Reset start time
 
         // Stop polling interval first
         if (this.pollingInterval) {
@@ -505,6 +530,7 @@ export class SqlProfilerManager {
                 END;
 
                 -- Create new session (database-scoped for Azure SQL)
+                -- Filter to exclude profiler's own queries (appName configured in ConnectionPoolManager)
                 CREATE EVENT SESSION [${this.sessionName}] ON DATABASE
                 ADD EVENT sqlserver.rpc_starting(
                     SET collect_statement=(1)
@@ -515,6 +541,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.rpc_completed(
                     SET collect_statement=(1)
@@ -525,6 +552,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.sql_batch_starting(
                     SET collect_batch_text=(1)
@@ -535,6 +563,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.sql_batch_completed(
                     SET collect_batch_text=(1)
@@ -545,6 +574,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.sql_statement_starting(
                     SET collect_statement=(1)
@@ -555,6 +585,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.sql_statement_completed(
                     SET collect_statement=(1)
@@ -565,6 +596,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.sp_statement_starting(
                     ACTION(
@@ -574,6 +606,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.sp_statement_completed(
                     ACTION(
@@ -583,6 +616,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 )
                 ADD TARGET package0.ring_buffer(
                     SET max_events_limit = 500,  -- Reduced from 2000 for faster consumption
@@ -615,6 +649,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.rpc_completed(
                     SET collect_statement=(1)
@@ -625,6 +660,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.sql_batch_starting(
                     SET collect_batch_text=(1)
@@ -635,16 +671,18 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.sql_batch_completed(
                     SET collect_batch_text=(1)
                     ACTION(
                         sqlserver.client_app_name,
-                        sqlserver.database_name,
                         sqlserver.username,
+                        sqlserver.database_name,
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.sql_statement_starting(
                     SET collect_statement=(1)
@@ -655,6 +693,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.sql_statement_completed(
                     SET collect_statement=(1)
@@ -665,6 +704,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.sp_statement_starting(
                     ACTION(
@@ -674,6 +714,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.sp_statement_completed(
                     ACTION(
@@ -683,6 +724,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 )
                 ADD TARGET package0.event_file(
                     SET filename = N'${this.xelFilePath}.xel',
@@ -701,8 +743,17 @@ export class SqlProfilerManager {
         console.log(createSessionQuery);
         console.log('=== END XE SESSION QUERY ===');
 
+        const sessionCreateStart = Date.now();
         const request = currentPool.request();
         await request.query(createSessionQuery);
+        const sessionCreateDuration = Date.now() - sessionCreateStart;
+
+        // Telemetry: XE session creation time
+        const { TelemetryService } = await import('../utils/TelemetryService');
+        const telemetry = TelemetryService.getInstance();
+        telemetry?.sendMetric('xeSessionCreateDuration', sessionCreateDuration, {
+            serverType: isAzure ? 'azure' : 'sqlserver'
+        });
 
         console.log('Extended Events session created successfully!');
     }
@@ -1143,6 +1194,16 @@ export class SqlProfilerManager {
     }
 
     private async collectResults(): Promise<void> {
+        // Leer modo de profiler desde configuración
+        const config = vscode.workspace.getConfiguration('sqlProfiler');
+        const profilerMode = config.get<string>('profilerMode', 'default');
+
+        // Si el modo es 'ads', usar la consulta y mapeo de Azure Data Studio
+        if (profilerMode === 'ads') {
+            await this.collectResultsADS();
+            return;
+        }
+
         // Semaphore check - prevent concurrent executions
         if (this.isCollectingResults) {
             console.log('⏭️ Skipping collectResults - already in progress');
@@ -1419,13 +1480,13 @@ export class SqlProfilerManager {
                 const newestEvent = filteredNewEvents[0];
                 const eventTime = new Date(newestEvent.timestamp).getTime();
                 const latencyMs = now - eventTime;
-                
+
                 // ⏱️ Log time from profiler start to first events (only for first batch)
                 if (this.lastEventReceivedTime === 0 && this.profilerStartTime > 0) {
                     const timeFromStart = now - this.profilerStartTime;
-                    console.log(`⏱️ FIRST EVENTS RECEIVED | Time from profiler start: ${timeFromStart}ms (${(timeFromStart/1000).toFixed(2)}s)`);
+                    console.log(`⏱️ FIRST EVENTS RECEIVED | Time from profiler start: ${timeFromStart}ms (${(timeFromStart / 1000).toFixed(2)}s)`);
                 }
-                
+
                 console.log(`✅ ${filteredNewEvents.length} new event(s) | Latency: ${latencyMs}ms | App: ${newestEvent.applicationName}`);
                 this.lastEventReceivedTime = now;
             }
@@ -1467,6 +1528,15 @@ export class SqlProfilerManager {
 
                 Logger.warn('Connection issue detected in collectResults, will be handled by polling error counter');
 
+                // Telemetry: connection error during event collection
+                const { TelemetryService } = await import('../utils/TelemetryService');
+                const telemetry = TelemetryService.getInstance();
+                telemetry?.sendEvent('profilingConnectionError', {
+                    errorCode: error.code || 'unknown',
+                    errorType: error.code === 'ETIMEDOUT' ? 'timeout' : 'connection',
+                    serverType: this.detectedDatabaseType || 'unknown'
+                });
+
                 // Clear cache to force fresh detection next time
                 this.databaseTypeCache.clear();
 
@@ -1478,6 +1548,121 @@ export class SqlProfilerManager {
             Logger.warn('Non-critical error in collectResults, continuing polling');
         } finally {
             // Always reset semaphore
+            this.isCollectingResults = false;
+        }
+    }
+
+    /**
+     * Lógica de captura y mapeo de eventos compatible con Azure Data Studio Profiler
+     */
+    private async collectResultsADS(): Promise<void> {
+        // Semaphore check
+        if (this.isCollectingResults) {
+            console.log('⏭️ Skipping collectResultsADS - already in progress');
+            return;
+        }
+
+        if (!this.pool || !this.isProfilering) {
+            return;
+        }
+
+        this.isCollectingResults = true;
+        const currentPool = this.pool;
+
+        try {
+            const isAzure = await this.isAzureSqlDatabase(currentPool);
+            let query: string;
+
+            if (isAzure) {
+                query = `
+                    SELECT TOP 50
+                        event_xml.value('(@timestamp)[1]', 'datetime2') AS timestamp,
+                        event_xml.value('(@name)[1]', 'nvarchar(128)') AS eventName,
+                        event_xml.value('(data[@name="database_name"]/value)[1]', 'nvarchar(128)') AS databaseName,
+                        event_xml.value('(action[@name="username"]/value)[1]', 'nvarchar(128)') AS userName,
+                        event_xml.value('(action[@name="client_app_name"]/value)[1]', 'nvarchar(128)') AS applicationName,
+                        event_xml.value('(data[@name="statement"]/value)[1]', 'nvarchar(max)') AS statement,
+                        event_xml.value('(data[@name="duration"]/value)[1]', 'bigint') AS duration
+                    FROM (
+                        SELECT CAST(target_data AS XML) AS target_xml
+                        FROM sys.dm_xe_database_session_targets AS t
+                        JOIN sys.dm_xe_database_sessions AS s ON s.address = t.event_session_address
+                        WHERE s.name = '${this.sessionName}'
+                          AND t.target_name = 'ring_buffer'
+                    ) AS src
+                    CROSS APPLY target_xml.nodes('RingBufferTarget/event') AS events(event_xml)
+                    WHERE event_xml.value('(@name)[1]', 'nvarchar(128)') IN ('rpc_completed', 'sql_batch_completed', 'sql_statement_completed')
+                      ${this.getAntiRecursionFiltersADS()}
+                    ORDER BY timestamp DESC;
+                `;
+            } else {
+                // Para SQL Server con archivos .xel, usamos una subconsulta para aplicar filtros correctamente
+                query = `
+                    SELECT TOP 50 *
+                    FROM (
+                        SELECT 
+                            CAST(event_data AS XML).value('(event/@timestamp)[1]', 'datetime2') AS timestamp,
+                            CAST(event_data AS XML).value('(event/@name)[1]', 'nvarchar(128)') AS eventName,
+                            CAST(event_data AS XML).value('(event/data[@name="database_name"]/value)[1]', 'nvarchar(128)') AS databaseName,
+                            CAST(event_data AS XML).value('(event/action[@name="username"]/value)[1]', 'nvarchar(128)') AS userName,
+                            CAST(event_data AS XML).value('(event/action[@name="client_app_name"]/value)[1]', 'nvarchar(128)') AS applicationName,
+                            CAST(event_data AS XML).value('(event/data[@name="statement"]/value)[1]', 'nvarchar(max)') AS statement,
+                            CAST(event_data AS XML).value('(event/data[@name="duration"]/value)[1]', 'bigint') AS duration,
+                            CAST(event_data AS XML) AS event_xml
+                        FROM sys.fn_xe_file_target_read_file('${this.xelFilePath}*.xel', null, null, null)
+                        WHERE CAST(event_data AS XML).value('(event/@name)[1]', 'nvarchar(128)') IN ('rpc_completed', 'sql_batch_completed', 'sql_statement_completed')
+                    ) AS events
+                    WHERE 1=1
+                      ${this.getAntiRecursionFiltersADS()}
+                    ORDER BY timestamp DESC;
+                `;
+            }
+
+            console.log('=== EXECUTING ADS MODE QUERY ===');
+            console.log('Session name:', this.sessionName);
+            console.log('Is Azure:', isAzure);
+
+            const request = currentPool.request();
+            const result = await request.query(query);
+
+            console.log(`ADS mode: Query returned ${result.recordset.length} records`);
+
+            const newEvents: ProfilerEvent[] = result.recordset.map((record: any) => {
+                return {
+                    id: this.generateEventId(record),
+                    timestamp: record.timestamp ? new Date(record.timestamp).toISOString() : new Date().toISOString(),
+                    eventName: record.eventName || 'Unknown',
+                    statement: record.statement || '',
+                    duration: record.duration ? Number(record.duration) : undefined,
+                    databaseName: record.databaseName || 'Unknown',
+                    userName: record.userName || 'Unknown',
+                    applicationName: record.applicationName || 'Unknown'
+                };
+            });
+
+            // Deduplicar y agregar eventos nuevos
+            const existingIds = new Set(this.results.map(e => e.id));
+            const filteredNewEvents = newEvents.filter(e => !existingIds.has(e.id));
+
+            console.log('=== ADS MODE EVENT DEDUPLICATION ===');
+            console.log('Total events from query:', newEvents.length);
+            console.log('New events to add:', filteredNewEvents.length);
+
+            this.results.unshift(...filteredNewEvents);
+
+            // Limitar resultados
+            const maxEvents = vscode.workspace.getConfiguration('sqlProfiler').get<number>('maxEvents') || 2000;
+            if (this.results.length > maxEvents) {
+                this.results = this.results.slice(0, maxEvents);
+            }
+
+            if (filteredNewEvents.length > 0) {
+                console.log(`✅ ADS mode: ${filteredNewEvents.length} new event(s) added`);
+            }
+        } catch (error: any) {
+            Logger.errorSilent('Error in collectResultsADS:', error);
+            console.error('ADS mode query failed:', error.message);
+        } finally {
             this.isCollectingResults = false;
         }
     }
@@ -1629,6 +1814,30 @@ export class SqlProfilerManager {
             hash = hash & hash; // Convert to 32bit integer
         }
         return Math.abs(hash).toString(16).substring(0, 8);
+    }
+
+    /**
+     * 🛡️ Generates SQL filter conditions for ADS mode (simplified XML paths)
+     * Adapted for event_xml structure used in collectResultsADS
+     * Only filters the profiler's OWN queries, not queries from other applications
+     */
+    private getAntiRecursionFiltersADS(): string {
+        // Solo filtrar queries que vienen específicamente de nuestra extensión
+        const filters = `
+            -- Solo excluir queries de la extensión SQL Profiler Tool
+            AND NOT (
+                COALESCE(event_xml.value('(action[@name="client_app_name"]/value)[1]', 'nvarchar(128)'), '') = 'SQL Profiler Tool for VS Code'
+                AND (
+                    COALESCE(event_xml.value('(data[@name="statement"]/value)[1]', 'nvarchar(max)'), '') LIKE '%sys.dm_xe_%'
+                    OR COALESCE(event_xml.value('(data[@name="statement"]/value)[1]', 'nvarchar(max)'), '') LIKE '%RingBufferTarget%'
+                    OR COALESCE(event_xml.value('(data[@name="statement"]/value)[1]', 'nvarchar(max)'), '') LIKE '%sys.fn_xe_file_target_read_file%'
+                    OR COALESCE(event_xml.value('(data[@name="statement"]/value)[1]', 'nvarchar(max)'), '') LIKE '%VSCodeProfilerSession%'
+                    OR COALESCE(event_xml.value('(data[@name="statement"]/value)[1]', 'nvarchar(max)'), '') LIKE '%sys.database_event_sessions%'
+                    OR COALESCE(event_xml.value('(data[@name="statement"]/value)[1]', 'nvarchar(max)'), '') LIKE '%sys.server_event_sessions%'
+                )
+            )`;
+
+        return filters;
     }
 
     /**

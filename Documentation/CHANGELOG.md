@@ -1,3 +1,14 @@
+# [0.3.0] - 2025-11-25
+
+### 🚀 Telemetry & Privacy
+- **NEW**: Anonymous usage and error telemetry is now collected to help improve the extension.
+- **NEW**: Telemetry can be disabled via the `sqlProfiler.telemetryEnabled` setting or VS Code's global privacy settings.
+- **PRIVACY**: No personal data, SQL queries, connection strings, usernames, or sensitive information is ever collected.
+- **DOCS**: README and implementation guide updated with privacy and opt-out details.
+
+### 🛠️ Other Improvements
+- Internal refactoring and code quality enhancements for maintainability.
+
 # Changelog
 
 All notable changes to the SQL Server Profiler Tool extension will be documented in this file.

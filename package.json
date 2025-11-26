@@ -5,7 +5,7 @@
   "version": "0.3.7",
   "publisher": "epolicardo",
   "engines": {
-    "vscode": "^1.74.0"
+    "vscode": "^1.106.0"
   },
   "categories": [
     "Other",
@@ -26,6 +26,174 @@
   "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "SQL Server Profiler Tool",
+      "properties": {
+        "sqlProfiler.connectionString": {
+          "type": "string",
+          "default": "",
+          "description": "SQL Server connection string",
+          "scope": "resource"
+        },
+        "sqlProfiler.sessionName": {
+          "type": "string",
+          "default": "VSCodeProfilerSession",
+          "description": "Extended Events session name"
+        },
+        "sqlProfiler.autoStart": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically start profiling when opening SQL files"
+        },
+        "sqlProfiler.maxEvents": {
+          "type": "number",
+          "default": 1000,
+          "description": "Maximum number of events to capture"
+        },
+        "sqlProfiler.selectedConnection": {
+          "type": "string",
+          "default": "",
+          "description": "Name of the selected mssql connection profile for profiling"
+        },
+        "sqlProfiler.connectionPool": {
+          "type": "object",
+          "default": {
+            "maxConnections": 5,
+            "minConnections": 2,
+            "idleTimeout": 60000,
+            "acquireTimeout": 30000,
+            "createTimeout": 30000,
+            "healthCheck": true,
+            "healthCheckInterval": 30000
+          },
+          "description": "Connection pool configuration",
+          "properties": {
+            "maxConnections": {
+              "type": "number",
+              "default": 5,
+              "minimum": 1,
+              "maximum": 20,
+              "description": "Maximum number of connections in the pool"
+            },
+            "minConnections": {
+              "type": "number",
+              "default": 2,
+              "minimum": 1,
+              "maximum": 10,
+              "description": "Minimum number of connections to maintain in the pool"
+            },
+            "idleTimeout": {
+              "type": "number",
+              "default": 60000,
+              "minimum": 5000,
+              "description": "Time in milliseconds after which idle connections are closed"
+            },
+            "acquireTimeout": {
+              "type": "number",
+              "default": 30000,
+              "minimum": 5000,
+              "description": "Time in milliseconds to wait for acquiring a connection"
+            },
+            "createTimeout": {
+              "type": "number",
+              "default": 30000,
+              "minimum": 5000,
+              "description": "Time in milliseconds to wait for creating a new connection"
+            },
+            "healthCheck": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable automatic health checks for connections"
+            },
+            "healthCheckInterval": {
+              "type": "number",
+              "default": 30000,
+              "minimum": 10000,
+              "description": "Interval in milliseconds for health check execution"
+            }
+          }
+        },
+        "sqlProfiler.autoReconnect": {
+          "type": "object",
+          "default": {
+            "maxRetries": 5,
+            "initialDelay": 1000,
+            "backoffFactor": 2,
+            "maxDelay": 30000,
+            "connectionTimeout": 15000,
+            "enableCircuitBreaker": true,
+            "circuitBreakerThreshold": 3,
+            "circuitBreakerCooldown": 60000
+          },
+          "description": "Auto-reconnection system configuration",
+          "properties": {
+            "maxRetries": {
+              "type": "number",
+              "default": 5,
+              "minimum": 1,
+              "maximum": 20,
+              "description": "Maximum number of reconnection attempts before giving up"
+            },
+            "initialDelay": {
+              "type": "number",
+              "default": 1000,
+              "minimum": 100,
+              "maximum": 10000,
+              "description": "Initial delay between reconnection attempts in milliseconds"
+            },
+            "backoffFactor": {
+              "type": "number",
+              "default": 2,
+              "minimum": 1,
+              "maximum": 5,
+              "description": "Exponential backoff factor for reconnection delays"
+            },
+            "maxDelay": {
+              "type": "number",
+              "default": 30000,
+              "minimum": 1000,
+              "maximum": 300000,
+              "description": "Maximum delay between reconnection attempts in milliseconds"
+            },
+            "connectionTimeout": {
+              "type": "number",
+              "default": 15000,
+              "minimum": 5000,
+              "maximum": 60000,
+              "description": "Timeout for each reconnection attempt in milliseconds"
+            },
+            "enableCircuitBreaker": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable circuit breaker to prevent excessive reconnection attempts"
+            },
+            "circuitBreakerThreshold": {
+              "type": "number",
+              "default": 3,
+              "minimum": 1,
+              "maximum": 10,
+              "description": "Number of consecutive failures before opening the circuit breaker"
+            },
+            "circuitBreakerCooldown": {
+              "type": "number",
+              "default": 60000,
+              "minimum": 10000,
+              "maximum": 600000,
+              "description": "Time to wait before attempting to close the circuit breaker in milliseconds"
+            }
+          }
+        },
+        "sqlProfiler.profilerMode": {
+          "type": "string",
+          "enum": [
+            "default",
+            "ads"
+          ],
+          "default": "default",
+          "description": "Choose the event capture mode: 'default' uses the extension's own logic and filters, 'ads' uses the same event capture and mapping as Azure Data Studio Profiler."
+        }
+      }
+    },
     "commands": [
       {
         "command": "sqlProfiler.startProfiling",
@@ -44,6 +212,12 @@
         "title": "Open SQL Server Profiler",
         "category": "SQL Profiler",
         "icon": "$(database)"
+      },
+      {
+        "command": "sqlProfiler.changeProfilerMode",
+        "title": "Change Profiler Capture Mode",
+        "category": "SQL Profiler",
+        "icon": "$(settings)"
       },
       {
         "command": "sqlProfiler.clearResults",
@@ -157,165 +331,6 @@
           "command": "sqlProfiler.diagnoseAzureSQL"
         }
       ]
-    },
-    "configuration": {
-      "title": "SQL Server Profiler Tool",
-      "properties": {
-        "sqlProfiler.connectionString": {
-          "type": "string",
-          "default": "",
-          "description": "SQL Server connection string",
-          "scope": "resource"
-        },
-        "sqlProfiler.sessionName": {
-          "type": "string",
-          "default": "VSCodeProfilerSession",
-          "description": "Extended Events session name"
-        },
-        "sqlProfiler.autoStart": {
-          "type": "boolean",
-          "default": false,
-          "description": "Automatically start profiling when opening SQL files"
-        },
-        "sqlProfiler.maxEvents": {
-          "type": "number",
-          "default": 1000,
-          "description": "Maximum number of events to capture"
-        },
-        "sqlProfiler.selectedConnection": {
-          "type": "string",
-          "default": "",
-          "description": "Name of the selected mssql connection profile for profiling"
-        },
-        "sqlProfiler.connectionPool": {
-          "type": "object",
-          "default": {
-            "maxConnections": 5,
-            "minConnections": 2,
-            "idleTimeout": 60000,
-            "acquireTimeout": 30000,
-            "createTimeout": 30000,
-            "healthCheck": true,
-            "healthCheckInterval": 30000
-          },
-          "description": "Connection pool configuration",
-          "properties": {
-            "maxConnections": {
-              "type": "number",
-              "default": 5,
-              "minimum": 1,
-              "maximum": 20,
-              "description": "Maximum number of connections in the pool"
-            },
-            "minConnections": {
-              "type": "number",
-              "default": 2,
-              "minimum": 1,
-              "maximum": 10,
-              "description": "Minimum number of connections to maintain in the pool"
-            },
-            "idleTimeout": {
-              "type": "number",
-              "default": 60000,
-              "minimum": 5000,
-              "description": "Time in milliseconds after which idle connections are closed"
-            },
-            "acquireTimeout": {
-              "type": "number",
-              "default": 30000,
-              "minimum": 5000,
-              "description": "Time in milliseconds to wait for acquiring a connection"
-            },
-            "createTimeout": {
-              "type": "number",
-              "default": 30000,
-              "minimum": 5000,
-              "description": "Time in milliseconds to wait for creating a new connection"
-            },
-            "healthCheck": {
-              "type": "boolean",
-              "default": true,
-              "description": "Enable automatic health checks for connections"
-            },
-            "healthCheckInterval": {
-              "type": "number",
-              "default": 30000,
-              "minimum": 10000,
-              "description": "Interval in milliseconds for health check execution"
-            }
-          }
-        },
-        "sqlProfiler.autoReconnect": {
-          "type": "object",
-          "default": {
-            "maxRetries": 5,
-            "initialDelay": 1000,
-            "backoffFactor": 2.0,
-            "maxDelay": 30000,
-            "connectionTimeout": 15000,
-            "enableCircuitBreaker": true,
-            "circuitBreakerThreshold": 3,
-            "circuitBreakerCooldown": 60000
-          },
-          "description": "Auto-reconnection system configuration",
-          "properties": {
-            "maxRetries": {
-              "type": "number",
-              "default": 5,
-              "minimum": 1,
-              "maximum": 20,
-              "description": "Maximum number of reconnection attempts before giving up"
-            },
-            "initialDelay": {
-              "type": "number",
-              "default": 1000,
-              "minimum": 100,
-              "maximum": 10000,
-              "description": "Initial delay between reconnection attempts in milliseconds"
-            },
-            "backoffFactor": {
-              "type": "number",
-              "default": 2.0,
-              "minimum": 1.0,
-              "maximum": 5.0,
-              "description": "Exponential backoff factor for reconnection delays"
-            },
-            "maxDelay": {
-              "type": "number",
-              "default": 30000,
-              "minimum": 1000,
-              "maximum": 300000,
-              "description": "Maximum delay between reconnection attempts in milliseconds"
-            },
-            "connectionTimeout": {
-              "type": "number",
-              "default": 15000,
-              "minimum": 5000,
-              "maximum": 60000,
-              "description": "Timeout for each reconnection attempt in milliseconds"
-            },
-            "enableCircuitBreaker": {
-              "type": "boolean",
-              "default": true,
-              "description": "Enable circuit breaker to prevent excessive reconnection attempts"
-            },
-            "circuitBreakerThreshold": {
-              "type": "number",
-              "default": 3,
-              "minimum": 1,
-              "maximum": 10,
-              "description": "Number of consecutive failures before opening the circuit breaker"
-            },
-            "circuitBreakerCooldown": {
-              "type": "number",
-              "default": 60000,
-              "minimum": 10000,
-              "maximum": 600000,
-              "description": "Time to wait before attempting to close the circuit breaker in milliseconds"
-            }
-          }
-        }
-      }
     }
   },
   "scripts": {
@@ -349,7 +364,7 @@
     "@types/mssql": "^9.1.8",
     "@types/node": "^16.18.126",
     "@types/tedious": "^18.0.0",
-    "@types/vscode": "^1.74.0",
+    "@types/vscode": "^1.106.1",
     "@typescript-eslint/eslint-plugin": "^5.45.0",
     "@typescript-eslint/parser": "^5.45.0",
     "eslint": "^8.28.0",
@@ -357,6 +372,7 @@
     "typescript": "^4.9.4"
   },
   "dependencies": {
+    "@vscode/extension-telemetry": "^1.2.0",
     "mssql": "^9.1.1"
   }
 }
