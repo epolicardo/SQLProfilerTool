@@ -102,14 +102,17 @@ export class ConnectionPoolManager {
             user: config.user,
             password: config.password,
             port: config.port,
-            // Unique app name for profiler identification and filtering
-            appName: 'SQL Profiler Tool for VS Code',
             // Ensure encrypt and trustServerCertificate are boolean values
             encrypt: config.encrypt !== undefined ? Boolean(config.encrypt) : false,
             trustServerCertificate: config.trustServerCertificate !== undefined ? Boolean(config.trustServerCertificate) : true,
             // Azure SQL needs longer timeouts due to network latency and throttling
             requestTimeout: isAzureSql ? 180000 : 90000,  // 3 min for Azure, 90s for on-prem
             connectionTimeout: isAzureSql ? 60000 : 30000,  // 1 min for Azure, 30s for on-prem
+            // Tedious options (including appName for client identification)
+            options: {
+                appName: 'SQL Profiler Tool for VS Code',  // Unique app name for XE filtering
+                ...(config.options || {})  // Merge with any existing options
+            },
             pool: {
                 max: config.maxConnections || 5,
                 min: config.minConnections || 0,  // Allow pool to be completely idle
@@ -123,11 +126,6 @@ export class ConnectionPoolManager {
                 propagateCreateError: false  // Don't propagate errors during pool creation
             }
         };
-
-        // Add options if they exist
-        if (config.options) {
-            poolConfig.options = { ...config.options };
-        }
 
         const pool = new sql.ConnectionPool(poolConfig);
 

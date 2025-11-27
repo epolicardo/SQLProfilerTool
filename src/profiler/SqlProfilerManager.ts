@@ -2731,6 +2731,16 @@ Current connection works but Extended Events requires VIEW SERVER STATE permissi
 
         console.log(`Found connection: ${connection.server}, auth: ${connection.authenticationType}`);
 
+        // 🔄 FORCE CLOSE existing pool to ensure new appName is applied
+        // This ensures the pool is recreated with 'SQL Profiler Tool for VS Code' appName
+        const existingPoolKeys = this.poolManager.getActivePoolKeys();
+        for (const key of existingPoolKeys) {
+            if (key.includes(selectedProfile.replace(/[^a-zA-Z0-9_]/g, '_'))) {
+                Logger.info(`Closing existing pool to force recreation with new appName: ${key}`);
+                await this.poolManager.closePool(key);
+            }
+        }
+
         // Auto-correct Azure SQL server format if needed
         const serverCorrection = this.correctAzureSqlServerFormat(connection.server);
         if (serverCorrection.wasChanged) {
