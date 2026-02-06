@@ -4,6 +4,7 @@ the 'mssql' module using the `sql` variable in your TypeScript code. */
 import * as sql from 'mssql';
 import * as vscode from 'vscode';
 import { Logger } from '../utils/Logger';
+import { OpenTelemetryService } from '../utils/OpenTelemetryService';
 
 export interface PoolConfig {
     server: string;
@@ -212,7 +213,7 @@ export class ConnectionPoolManager {
             // Access internal pool statistics (these are private properties in mssql)
             const poolInternal = (pool as any).pool;
 
-            return {
+            const stats = {
                 poolName: poolKey,
                 connected: pool.connected,
                 connecting: pool.connecting,
@@ -224,6 +225,18 @@ export class ConnectionPoolManager {
                 max: config.maxConnections || 5,
                 idleTimeout: config.idleTimeout || 30000
             };
+
+            // Update OpenTelemetry metrics
+            const otelService = OpenTelemetryService.getInstance();
+            if (otelService?.isActive()) {
+                otelService.updateConnectionPoolStats(
+                    stats.borrowed,
+                    stats.available,
+                    stats.size
+                );
+            }
+
+            return stats;
         } catch (error) {
             Logger.errorSilent(`Error getting pool stats for ${poolKey}:`, error);
             return {

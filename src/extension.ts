@@ -1,9 +1,11 @@
 
 import * as vscode from 'vscode';
+import * as os from 'os';
 import { SqlProfilerManager } from './profiler/SqlProfilerManager';
 import { ProfilerWebviewProvider } from './webview/ProfilerWebviewProvider';
 import { Logger } from './utils/Logger';
 import { TelemetryService } from './utils/TelemetryService';
+import { OpenTelemetryService } from './utils/OpenTelemetryService';
 
 let profilerManager: SqlProfilerManager | undefined;
 let currentPanel: vscode.WebviewPanel | undefined;
@@ -13,16 +15,55 @@ export function activate(context: vscode.ExtensionContext) {
     Logger.initialize(context);
     Logger.info('SQL Server Profiler Tool extension is now active!');
 
-    // --- TelemetryService: inicialización segura ---
+    // Application Insights Connection String
+    const aiConnectionString = 'InstrumentationKey=bbbe0a85-ac32-4bc3-bed1-aa51232a7843;IngestionEndpoint=https://brazilsouth-1.in.applicationinsights.azure.com/;LiveEndpoint=https://brazilsouth.livediagnostics.monitor.azure.com/;ApplicationId=ea1ee39c-7c34-4225-ae0a-1defcc009bc2';
+
+    // --- OpenTelemetry: inicialización ---
     try {
-        // TODO: Reemplazar por tu Application Insights Key real
-        const aiKey = process.env.APPINSIGHTS_INSTRUMENTATIONKEY || '';
-        if (aiKey) {
-            TelemetryService.initialize(context, aiKey);
-            TelemetryService.getInstance()?.sendEvent('extensionActivated');
-        } else {
-            Logger.info('Telemetry not initialized: No Application Insights key found.');
-        }
+        const otelService = OpenTelemetryService.initialize(context, aiConnectionString);
+        
+        // Start a trace for extension activation
+        otelService.startActiveSpan('extension.activate', {
+            'extension.version': context.extension.packageJSON.version,
+            'vscode.version': vscode.version,
+            'os.platform': os.platform(),
+        }, (span) => {
+            Logger.info('OpenTelemetry initialized successfully');
+            otelService.endSpan(span);
+        });
+    } catch (err) {
+        Logger.error('Error initializing OpenTelemetry: ' + (err instanceof Error ? err.message : String(err)));
+    }
+
+    // --- TelemetryService: inicialización segura (mantenida para compatibilidad) ---
+    try {
+        TelemetryService.initialize(context, aiConnectionString);
+
+        // Capture system information
+        const systemInfo = {
+            // Operating System
+            osPlatform: os.platform(),          // 'win32', 'darwin', 'linux'
+            osType: os.type(),                  // 'Windows_NT', 'Darwin', 'Linux'
+            osRelease: os.release(),            // OS version
+            osArch: os.arch(),                  // 'x64', 'arm64', etc.
+
+            // VS Code Environment
+            vscodeVersion: vscode.version,      // VS Code version
+            vscodeLanguage: vscode.env.language, // UI language
+            vscodeRemoteName: vscode.env.remoteName || 'local', // Remote environment (SSH, WSL, etc.)
+            vscodeUiKind: vscode.env.uiKind === vscode.UIKind.Desktop ? 'desktop' : 'web',
+
+            // Extension Info
+            extensionVersion: context.extension.packageJSON.version,
+
+            // Node.js Info
+            nodeVersion: process.version,       // Node.js version
+            nodeArch: process.arch              // Process architecture
+        };
+
+        TelemetryService.getInstance()?.sendEvent('extensionActivated', systemInfo);
+        Logger.info('Telemetry initialized successfully with Azure Application Insights');
+        Logger.info(`System Info: ${os.platform()} ${os.arch()}, VS Code ${vscode.version}, Node ${process.version}`);
     } catch (err) {
         Logger.error('Error initializing telemetry: ' + (err instanceof Error ? err.message : String(err)));
     }
@@ -150,16 +191,25 @@ export function activate(context: vscode.ExtensionContext) {
 
 function registerCommands(context: vscode.ExtensionContext) {
     // Command to change profiler mode (default/ads)
+    // NOTE: 'default' mode is temporarily disabled - only 'ads' mode is available
     context.subscriptions.push(
         vscode.commands.registerCommand('sqlProfiler.changeProfilerMode', async () => {
             const config = vscode.workspace.getConfiguration('sqlProfiler');
-            const currentMode = config.get<string>('profilerMode', 'default');
+            const currentMode = config.get<string>('profilerMode', 'ads');
+
+            // Only ADS mode is available for now
+            /* DISABLED - will be re-enabled in future version after fixes
             const options = [
                 { label: 'Default (Extension Logic)', value: 'default', description: 'Use the extension\'s own event capture and filters.' },
                 { label: 'ADS Compatible', value: 'ads', description: 'Use the same event capture and mapping as Azure Data Studio Profiler.' }
             ];
+            */
+            const options = [
+                { label: 'ADS Compatible (Recommended)', value: 'ads', description: 'Use the same event capture and mapping as Azure Data Studio Profiler.' }
+            ];
+
             const selected = await vscode.window.showQuickPick(options, {
-                placeHolder: `Current mode: ${currentMode === 'ads' ? 'ADS Compatible' : 'Default (Extension Logic)'}`,
+                placeHolder: `Current mode: ADS Compatible`,
                 ignoreFocusOut: true
             });
             if (selected && selected.value !== currentMode) {
@@ -172,7 +222,7 @@ function registerCommands(context: vscode.ExtensionContext) {
                 });
                 vscode.window.showInformationMessage(`Profiler mode changed to: ${selected.label}`);
             } else if (selected) {
-                vscode.window.showInformationMessage(`Profiler mode is already set to: ${selected.label}`);
+                vscode.window.showInformationMessage(`Profiler mode is currently: ${selected.label}\n\nNote: Default mode is temporarily disabled and will be available in a future version.`);
             }
         })
     );
@@ -672,7 +722,9 @@ async function exportResults() {
     const uri = await vscode.window.showSaveDialog({
         defaultUri: vscode.Uri.file('profiler-results.json'),
         filters: {
+            // eslint-disable-next-line @typescript-eslint/naming-convention
             'JSON Files': ['json'],
+            // eslint-disable-next-line @typescript-eslint/naming-convention
             'All Files': ['*']
         }
     });
@@ -860,6 +912,7 @@ export async function deactivate() {
             await profilerManager.dispose();
 
             // Cerrar todos los pools de conexiones
+            // eslint-disable-next-line @typescript-eslint/naming-convention
             const { ConnectionPoolManager } = await import('./database/ConnectionPoolManager');
             const poolManager = ConnectionPoolManager.getInstance();
             await poolManager.closeAllPools();

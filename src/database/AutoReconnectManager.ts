@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { Logger } from '../utils/Logger';
 import { ConnectionPoolManager, PoolConfig } from './ConnectionPoolManager';
+import { OpenTelemetryService } from '../utils/OpenTelemetryService';
 
 /**
  * Configuración para el sistema de reconexión automática
@@ -154,6 +155,41 @@ export class AutoReconnectManager {
      * Emite un evento de reconexión a todos los callbacks registrados
      */
     private emitEvent(event: Parameters<ReconnectEventCallback>[0]): void {
+        // Enviar métricas a OpenTelemetry
+        const otelService = OpenTelemetryService.getInstance();
+        if (otelService?.isActive()) {
+            switch (event.type) {
+                case 'attempt':
+                    otelService.recordReconnection(false, {
+                        'reconnect.poolKey': event.poolKey,
+                        'reconnect.attempt': event.attempt?.attempt.toString() || '0',
+                        'reconnect.errorType': event.attempt?.errorType || 'unknown',
+                    });
+                    break;
+                case 'success':
+                    otelService.recordReconnection(true, {
+                        'reconnect.poolKey': event.poolKey,
+                        'reconnect.totalAttempts': event.totalAttempts?.toString() || '0',
+                    });
+                    break;
+                case 'failure':
+                    otelService.recordError('reconnect_failure', {
+                        'reconnect.poolKey': event.poolKey,
+                        'reconnect.totalAttempts': event.totalAttempts?.toString() || '0',
+                    });
+                    break;
+                case 'circuit-breaker-open':
+                    otelService.recordError('circuit_breaker_opened', {
+                        'reconnect.poolKey': event.poolKey,
+                    });
+                    break;
+                case 'circuit-breaker-closed':
+                    otelService.recordEventCaptured('circuit_breaker_closed');
+                    break;
+            }
+        }
+
+        // Llamar a los callbacks registrados
         for (const callback of this.eventCallbacks) {
             try {
                 callback(event);

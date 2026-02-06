@@ -3,6 +3,8 @@ import * as vscode from 'vscode';
 import { Logger } from '../utils/Logger';
 import { ConnectionPoolManager, PoolConfig, PoolStats } from '../database/ConnectionPoolManager';
 import { AutoReconnectManager, ConnectionErrorType } from '../database/AutoReconnectManager';
+import { TelemetryService } from '../utils/TelemetryService';
+import { OpenTelemetryService } from '../utils/OpenTelemetryService';
 
 export interface MssqlConnection {
     profileName: string;
@@ -149,6 +151,11 @@ export class SqlProfilerManager {
             throw new Error('Profiling is already running');
         }
 
+        const otelService = OpenTelemetryService.getInstance();
+        const span = otelService?.startSpan('profiler.startProfiling', {
+            'profiler.sessionName': this.sessionName,
+        });
+
         try {
             Logger.info('Starting profiling...');
             this.hasRunInitialDiagnostics = false; // Reset for new session
@@ -159,8 +166,18 @@ export class SqlProfilerManager {
 
             if (selectedProfile) {
                 console.log('Attempting to connect using selected profile...');
-                await this.connectUsingPool();
-                console.log('Connected successfully using profile with pool');
+                const connectSpan = otelService?.startSpan('profiler.connectUsingPool', {
+                    'connection.profile': selectedProfile,
+                });
+                try {
+                    await this.connectUsingPool();
+                    console.log('Connected successfully using profile with pool');
+                    otelService?.endSpan(connectSpan!);
+                } catch (error) {
+                    otelService?.recordException(connectSpan!, error as Error);
+                    connectSpan?.end();
+                    throw error;
+                }
             } else {
                 // Fallback to connection string method
                 console.log('No profile selected, trying connection string...');
@@ -184,7 +201,15 @@ export class SqlProfilerManager {
 
             // Create Extended Events session
             console.log('Creating Extended Events session...');
-            await this.createXESession();
+            const createSessionSpan = otelService?.startSpan('profiler.createXESession');
+            try {
+                await this.createXESession();
+                otelService?.endSpan(createSessionSpan!);
+            } catch (error) {
+                otelService?.recordException(createSessionSpan!, error as Error);
+                createSessionSpan?.end();
+                throw error;
+            }
 
             // Start the session
             console.log('Starting Extended Events session...');
@@ -199,8 +224,14 @@ export class SqlProfilerManager {
             console.log(`⏱️ Polling configured: ${this.pollingIntervalMs}ms for ${isAzure ? 'Azure SQL' : 'SQL Server'}`);
             console.log(`⏱️ Profiler started at: ${new Date(this.profilerStartTime).toISOString()}`);
 
+            // OpenTelemetry metrics
+            otelService?.recordEventCaptured('profiling_session_started');
+            span?.setAttributes({
+                'profiler.serverType': isAzure ? 'azure' : 'sqlserver',
+                'profiler.pollingInterval': this.pollingIntervalMs,
+            });
+
             // Telemetry: profiling started with server type
-            const { TelemetryService } = await import('../utils/TelemetryService');
             const telemetry = TelemetryService.getInstance();
             const sessionStartTime = Date.now();
             telemetry?.sendEvent('profilingSessionStarted', {
@@ -221,10 +252,16 @@ export class SqlProfilerManager {
             console.log('Pool status:', this.pool ? 'Connected' : 'Not connected');
 
             Logger.info('Profiling started successfully!');
+            otelService?.endSpan(span!);
 
         } catch (error) {
             this.isProfilering = false;
             Logger.error('Failed to start profiling', error);
+            otelService?.recordException(span!, error as Error);
+            otelService?.recordError('profiling_start_failed', {
+                'error.message': (error as Error).message,
+            });
+            span?.end();
             throw error;
         }
     }
@@ -232,72 +269,95 @@ export class SqlProfilerManager {
     async stopProfiling(): Promise<void> {
         Logger.info('Stopping profiling...');
 
+        const otelService = OpenTelemetryService.getInstance();
+        const span = otelService?.startSpan('profiler.stopProfiling');
+
         if (!this.isProfilering) {
             Logger.info('Profiling is not running, nothing to stop');
+            span?.end();
             return;
         }
 
-        // Calculate session metrics before cleanup
-        const sessionDuration = this.profilerStartTime ? Date.now() - this.profilerStartTime : 0;
-        const totalEvents = this.results.length;
+        try {
+            // Calculate session metrics before cleanup
+            const sessionDuration = this.profilerStartTime ? Date.now() - this.profilerStartTime : 0;
+            const totalEvents = this.results.length;
 
-        // Telemetry: profiling session ended
-        const { TelemetryService } = await import('../utils/TelemetryService');
-        const telemetry = TelemetryService.getInstance();
-        telemetry?.sendMetric('profilingSessionDuration', Math.round(sessionDuration / 1000), {
-            serverType: this.detectedDatabaseType || 'unknown'
-        });
-        telemetry?.sendMetric('profilingSessionEventCount', totalEvents, {
-            serverType: this.detectedDatabaseType || 'unknown'
-        });
+            // OpenTelemetry metrics
+            otelService?.recordQueryDuration(sessionDuration, {
+                'metric.type': 'session_duration',
+                'profiler.serverType': this.detectedDatabaseType || 'unknown',
+            });
+            span?.setAttributes({
+                'profiler.sessionDuration': sessionDuration,
+                'profiler.totalEvents': totalEvents,
+                'profiler.serverType': this.detectedDatabaseType || 'unknown',
+            });
 
-        // Set flags first to prevent new polling attempts
-        this.isProfilering = false;
-        this.hasRunInitialDiagnostics = false; // Reset for next profiling session
-        this.isCollectingResults = false; // Reset semaphore
-        this.lastReadTimestamp = null; // Reset streaming timestamp
-        this.eventIdCounter = 0; // Reset ID counter for fresh session
-        this.profilerStartTime = 0; // Reset start time
+            // Telemetry: profiling session ended
+            const telemetry = TelemetryService.getInstance();
+            telemetry?.sendMetric('profilingSessionDuration', Math.round(sessionDuration / 1000), {
+                serverType: this.detectedDatabaseType || 'unknown'
+            });
+            telemetry?.sendMetric('profilingSessionEventCount', totalEvents, {
+                serverType: this.detectedDatabaseType || 'unknown'
+            });
 
-        // Stop polling interval first
-        if (this.pollingInterval) {
-            clearInterval(this.pollingInterval);
-            this.pollingInterval = undefined;
-            Logger.info('Polling interval cleared');
-        }
+            // Set flags first to prevent new polling attempts
+            this.isProfilering = false;
+            this.hasRunInitialDiagnostics = false; // Reset for next profiling session
+            this.isCollectingResults = false; // Reset semaphore
+            this.lastReadTimestamp = null; // Reset streaming timestamp
+            this.eventIdCounter = 0; // Reset ID counter for fresh session
+            this.profilerStartTime = 0; // Reset start time
 
-        // Try to stop XE session gracefully
-        if (this.pool) {
-            try {
-                Logger.info('Attempting to stop Extended Events session');
-                await this.stopXESession();
-                Logger.info('Extended Events session stopped successfully');
-            } catch (error) {
-                Logger.warn('Error stopping XE session (non-critical):', error);
+            // Stop polling interval first
+            if (this.pollingInterval) {
+                clearInterval(this.pollingInterval);
+                this.pollingInterval = undefined;
+                Logger.info('Polling interval cleared');
             }
 
-            try {
-                Logger.info('Attempting to drop Extended Events session');
-                await this.dropXESession();
-                Logger.info('Extended Events session dropped successfully');
-            } catch (error) {
-                Logger.warn('Error dropping XE session (non-critical):', error);
+            // Try to stop XE session gracefully
+            if (this.pool) {
+                try {
+                    Logger.info('Attempting to stop Extended Events session');
+                    await this.stopXESession();
+                    Logger.info('Extended Events session stopped successfully');
+                } catch (error) {
+                    Logger.warn('Error stopping XE session (non-critical):', error);
+                }
+
+                try {
+                    Logger.info('Attempting to drop Extended Events session');
+                    await this.dropXESession();
+                    Logger.info('Extended Events session dropped successfully');
+                } catch (error) {
+                    Logger.warn('Error dropping XE session (non-critical):', error);
+                }
+
+                // Note: We don't close the pool here as it's managed by the pool manager
+                // and may be reused by other operations
+                this.pool = undefined;
+                this.currentPoolKey = undefined;
+                Logger.info('Pool references cleared');
             }
 
-            // Note: We don't close the pool here as it's managed by the pool manager
-            // and may be reused by other operations
-            this.pool = undefined;
-            this.currentPoolKey = undefined;
-            Logger.info('Pool references cleared');
+            // Clear database type cache to avoid stale data on reconnection
+            this.databaseTypeCache.clear();
+            this.detectedDatabaseType = null; // Reset for next session
+            this.lastAzureTimestamp = null; // Reset Azure sliding window
+            this.lastReadTimestamp = null; // Reset SQL Server streaming
+            this.profilerStartTime = 0; // Reset profiler start time
+            Logger.info('Profiling stopped successfully - database type cache and timestamps cleared');
+            
+            otelService?.endSpan(span!);
+        } catch (error) {
+            Logger.error('Error during profiling stop', error);
+            otelService?.recordException(span!, error as Error);
+            span?.end();
+            throw error;
         }
-
-        // Clear database type cache to avoid stale data on reconnection
-        this.databaseTypeCache.clear();
-        this.detectedDatabaseType = null; // Reset for next session
-        this.lastAzureTimestamp = null; // Reset Azure sliding window
-        this.lastReadTimestamp = null; // Reset SQL Server streaming
-        this.profilerStartTime = 0; // Reset profiler start time
-        Logger.info('Profiling stopped successfully - database type cache and timestamps cleared');
     }
 
     private async isAzureSqlDatabase(pool?: any): Promise<boolean> {
@@ -749,7 +809,6 @@ export class SqlProfilerManager {
         const sessionCreateDuration = Date.now() - sessionCreateStart;
 
         // Telemetry: XE session creation time
-        const { TelemetryService } = await import('../utils/TelemetryService');
         const telemetry = TelemetryService.getInstance();
         telemetry?.sendMetric('xeSessionCreateDuration', sessionCreateDuration, {
             serverType: isAzure ? 'azure' : 'sqlserver'
@@ -1529,7 +1588,6 @@ export class SqlProfilerManager {
                 Logger.warn('Connection issue detected in collectResults, will be handled by polling error counter');
 
                 // Telemetry: connection error during event collection
-                const { TelemetryService } = await import('../utils/TelemetryService');
                 const telemetry = TelemetryService.getInstance();
                 telemetry?.sendEvent('profilingConnectionError', {
                     errorCode: error.code || 'unknown',

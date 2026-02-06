@@ -2,7 +2,7 @@
   "name": "sql-server-profiler-tool",
   "displayName": "SQL Server Profiler Tool",
   "description": "SQL Server profiler extension using Extended Events for real-time query capture and analysis with advanced connection pooling, auto-reconnection system, and persistent UI state",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "publisher": "epolicardo",
   "engines": {
     "vscode": "^1.106.0"
@@ -186,11 +186,38 @@
         "sqlProfiler.profilerMode": {
           "type": "string",
           "enum": [
-            "default",
             "ads"
           ],
-          "default": "default",
-          "description": "Choose the event capture mode: 'default' uses the extension's own logic and filters, 'ads' uses the same event capture and mapping as Azure Data Studio Profiler."
+          "enumDescriptions": [
+            "Azure Data Studio Profiler compatible mode - uses the same event capture and mapping as ADS (recommended)"
+          ],
+          "default": "ads",
+          "markdownDescription": "**Event Capture Mode**:\n\n- `ads`: Azure Data Studio compatible mode - captures events using the same query logic as ADS Profiler (recommended)\n\n*Note: The 'default' mode is temporarily disabled and will be re-enabled in a future version after fixes*"
+        },
+        "sqlProfiler.telemetryEnabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "**Enable telemetry and OpenTelemetry instrumentation** for SQL Profiler Tool.\n\n✅ **Enabled by default** to help improve the extension.\n\n🔒 **Privacy guaranteed**: All sensitive data (passwords, connection strings, SQL queries) is automatically sanitized. Only anonymous usage patterns and performance metrics are collected.\n\n💡 You can disable this at any time. Also respects VS Code's global telemetry settings."
+        },
+        "sqlProfiler.openTelemetry": {
+          "type": "object",
+          "default": {
+            "endpoint": "https://brazilsouth-1.in.applicationinsights.azure.com",
+            "headers": {}
+          },
+          "markdownDescription": "**OpenTelemetry configuration** for distributed tracing, metrics, and structured logging.\n\n✅ **Default destination**: Azure Application Insights (OTLP).\n\n📊 You can override the endpoint to send telemetry data to your preferred observability platform (Jaeger, Grafana, Datadog, etc.).\n\n🚀 **Quick start**: Run Jaeger locally with `docker run -p 4318:4318 -p 16686:16686 jaegertracing/all-in-one`",
+          "properties": {
+            "endpoint": {
+              "type": "string",
+              "default": "https://brazilsouth-1.in.applicationinsights.azure.com",
+              "markdownDescription": "**OTLP endpoint URL** for exporting traces and metrics.\n\n**Default**: Azure Application Insights OTLP endpoint.\n\n**Examples**:\n- `https://brazilsouth-1.in.applicationinsights.azure.com` - Azure Application Insights\n- `http://localhost:4318` - Local Jaeger/OpenTelemetry Collector\n- `https://otlp.nr-data.net:4318` - New Relic\n- `https://http-intake.logs.datadoghq.com/api/v2/otlp` - Datadog\n\nSee documentation for more examples."
+            },
+            "headers": {
+              "type": "object",
+              "default": {},
+              "markdownDescription": "**Additional HTTP headers** for authentication with your observability platform.\n\n**Example**:\n```json\n{\n  \"Authorization\": \"Bearer YOUR_TOKEN\",\n  \"X-API-Key\": \"YOUR_KEY\"\n}\n```"
+            }
+          }
         }
       }
     },
@@ -372,6 +399,14 @@
     "typescript": "^4.9.4"
   },
   "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/auto-instrumentations-node": "^0.69.0",
+    "@opentelemetry/exporter-metrics-otlp-http": "^0.211.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.211.0",
+    "@opentelemetry/instrumentation": "^0.211.0",
+    "@opentelemetry/resources": "^2.5.0",
+    "@opentelemetry/sdk-node": "^0.211.0",
+    "@opentelemetry/semantic-conventions": "^1.39.0",
     "@vscode/extension-telemetry": "^1.2.0",
     "mssql": "^9.1.1"
   }
