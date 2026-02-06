@@ -2,7 +2,7 @@
   "name": "sql-server-profiler-tool",
   "displayName": "SQL Server Profiler Tool",
   "description": "SQL Server profiler extension using Extended Events for real-time query capture and analysis with advanced connection pooling, auto-reconnection system, and persistent UI state",
-  "version": "0.3.8",
+  "version": "0.4.0",
   "publisher": "epolicardo",
   "engines": {
     "vscode": "^1.106.0"
