@@ -203,6 +203,10 @@ export class SqlProfilerManager {
             console.log('Creating Extended Events session...');
             const createSessionSpan = otelService?.startSpan('profiler.createXESession');
             try {
+                // Show progress message to user
+                const serverType = this.currentConnection?.server?.includes('.database.windows.net') ? 'Azure SQL Database' : 'SQL Server';
+                vscode.window.showInformationMessage(`🚀 SQL Profiler: Creating profiler session on ${serverType}...`);
+                
                 await this.createXESession();
                 otelService?.endSpan(createSessionSpan!);
             } catch (error) {
@@ -362,9 +366,17 @@ export class SqlProfilerManager {
 
     private async isAzureSqlDatabase(pool?: any): Promise<boolean> {
         const poolToUse = pool || this.pool;
-
-        if (!poolToUse || !this.currentPoolKey) {
-            return false;
+        
+        // If no pool available, default to Azure (safest option)
+        if (!poolToUse) {
+            Logger.warn('No pool available for type detection - defaulting to Azure SQL');
+            this.detectedDatabaseType = 'azure';
+            return true;
+        }
+        
+        // Generate pool key for caching
+        if (!this.currentPoolKey && poolToUse.config) {
+            this.currentPoolKey = `${poolToUse.config.server}_${poolToUse.config.database || 'master'}`;
         }
 
         // 🚀 Check session cache first (valid for entire profiling session)
@@ -375,8 +387,8 @@ export class SqlProfilerManager {
         }
 
         // Check memory cache (for backwards compatibility)
-        const cached = this.databaseTypeCache.get(this.currentPoolKey);
         const now = Date.now();
+        const cached = this.currentPoolKey ? this.databaseTypeCache.get(this.currentPoolKey) : undefined;
 
         if (cached && (now - cached.timestamp) < this.cacheTimeoutMs) {
             // Use console.log instead of Logger.info to reduce spam
@@ -388,7 +400,8 @@ export class SqlProfilerManager {
             let isAzure = false;
 
             // Check 1: Look at server name first (fastest and most reliable check)
-            const serverCorrection = this.correctAzureSqlServerFormat(this.currentPoolKey);
+            const poolKeyForCheck = this.currentPoolKey || `${poolToUse.config?.server || 'unknown'}_${poolToUse.config?.database || 'master'}`;
+            const serverCorrection = this.correctAzureSqlServerFormat(poolKeyForCheck);
             const serverName = serverCorrection.corrected.toLowerCase();
 
             if (serverName.includes('.database.windows.net') || serverName.includes('.sql.azuresynapse.net')) {
@@ -397,10 +410,12 @@ export class SqlProfilerManager {
 
                 // Fast path: If server name confirms Azure, skip database queries
                 // Cache immediately and return
-                this.databaseTypeCache.set(this.currentPoolKey, {
-                    isAzure: true,
-                    timestamp: now
-                });
+                if (this.currentPoolKey) {
+                    this.databaseTypeCache.set(this.currentPoolKey, {
+                        isAzure: true,
+                        timestamp: now
+                    });
+                }
                 this.detectedDatabaseType = 'azure';
                 return true;
             } else {
@@ -424,9 +439,14 @@ export class SqlProfilerManager {
                             await serverRequest.query('SELECT TOP 1 1 FROM sys.server_event_sessions');
                             Logger.info('Detected SQL Server (on-premise/managed instance) - server views accessible');
                             isAzure = false;
-                        } catch (serverViewError) {
+                        } catch (serverViewError: any) {
                             // Silently handle expected error on Azure SQL
-                            Logger.info('Server views not accessible - likely Azure SQL Database');
+                            const errorMsg = serverViewError?.message || String(serverViewError);
+                            if (errorMsg.includes('Invalid object name') || errorMsg.includes('sys.server_event_sessions')) {
+                                Logger.info('Server views not accessible (Invalid object name) - confirmed Azure SQL Database');
+                            } else {
+                                Logger.info('Server views not accessible - likely Azure SQL Database');
+                            }
                             isAzure = true;
                         }
                     }
@@ -440,10 +460,12 @@ export class SqlProfilerManager {
             }
 
             // Cache the result in both memory cache and session cache
-            this.databaseTypeCache.set(this.currentPoolKey, {
-                isAzure: isAzure,
-                timestamp: now
-            });
+            if (this.currentPoolKey) {
+                this.databaseTypeCache.set(this.currentPoolKey, {
+                    isAzure: isAzure,
+                    timestamp: now
+                });
+            }
 
             // 🚀 Cache for entire session (no expiration until disconnect)
             this.detectedDatabaseType = isAzure ? 'azure' : 'sqlserver';
@@ -804,17 +826,45 @@ export class SqlProfilerManager {
         console.log('=== END XE SESSION QUERY ===');
 
         const sessionCreateStart = Date.now();
-        const request = currentPool.request();
-        await request.query(createSessionQuery);
-        const sessionCreateDuration = Date.now() - sessionCreateStart;
+        
+        try {
+            const request = currentPool.request();
+            await request.query(createSessionQuery);
+            const sessionCreateDuration = Date.now() - sessionCreateStart;
 
-        // Telemetry: XE session creation time
-        const telemetry = TelemetryService.getInstance();
-        telemetry?.sendMetric('xeSessionCreateDuration', sessionCreateDuration, {
-            serverType: isAzure ? 'azure' : 'sqlserver'
-        });
+            // Telemetry: XE session creation time
+            const telemetry = TelemetryService.getInstance();
+            telemetry?.sendMetric('xeSessionCreateDuration', sessionCreateDuration, {
+                serverType: isAzure ? 'azure' : 'sqlserver'
+            });
 
-        console.log('Extended Events session created successfully!');
+            console.log('Extended Events session created successfully!');
+        } catch (error: any) {
+            const errorMsg = error?.message || String(error);
+            
+            // If we get "Invalid object name 'sys.server_event_sessions'", it means Azure detection failed
+            if (!isAzure && errorMsg.includes('Invalid object name') && errorMsg.includes('sys.server_event_sessions')) {
+                // Silently detect and switch to Azure SQL Database
+                console.log('📊 Detected Azure SQL Database - switching to database-scoped Extended Events');
+                vscode.window.showInformationMessage('🔄 SQL Profiler: Connecting to Azure SQL Database... using database-scoped events');
+                
+                // Force cache update to Azure
+                this.detectedDatabaseType = 'azure';
+                if (this.currentPoolKey) {
+                    this.databaseTypeCache.set(this.currentPoolKey, {
+                        isAzure: true,
+                        timestamp: Date.now()
+                    });
+                }
+                
+                // Retry with Azure SQL Database syntax
+                console.log('Retrying createXESession() with Azure SQL Database syntax...');
+                return this.createXESession();
+            }
+            
+            Logger.error('Failed to create XE session', error);
+            throw error;
+        }
     }
 
     private async startXESession(): Promise<void> {
