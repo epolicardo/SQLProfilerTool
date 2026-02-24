@@ -24,9 +24,9 @@ export function activate(context: vscode.ExtensionContext) {
         
         // Start a trace for extension activation
         otelService.startActiveSpan('extension.activate', {
-            'extension.version': context.extension.packageJSON.version,
-            'vscode.version': vscode.version,
-            'os.platform': os.platform(),
+            extensionVersion: context.extension.packageJSON.version,
+            vscodeVersion: vscode.version,
+            osPlatform: os.platform(),
         }, (span) => {
             Logger.info('OpenTelemetry initialized successfully');
             otelService.endSpan(span);

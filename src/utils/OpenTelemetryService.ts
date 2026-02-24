@@ -1,12 +1,6 @@
 import * as vscode from 'vscode';
 import * as os from 'os';
-import { NodeSDK } from '@opentelemetry/sdk-node';
-import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
-import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
-import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
-import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
-import { resourceFromAttributes } from '@opentelemetry/resources';
-import { SEMRESATTRS_SERVICE_NAME, SEMRESATTRS_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
+import { useAzureMonitor } from '@azure/monitor-opentelemetry';
 import { 
     trace, 
     Span, 
@@ -28,7 +22,6 @@ import { Logger } from './Logger';
  */
 export class OpenTelemetryService {
     private static instance: OpenTelemetryService | undefined;
-    private sdk: NodeSDK | undefined;
     private tracer: Tracer;
     private meter: Meter;
     private isEnabled: boolean = false;
@@ -75,65 +68,24 @@ export class OpenTelemetryService {
         }
 
         // Get configuration
-        const otelConfig = config.get<any>('openTelemetry', {});
-        const endpoint = otelConfig.endpoint || process.env.OTEL_EXPORTER_OTLP_ENDPOINT || 'https://brazilsouth-1.in.applicationinsights.azure.com';
         const serviceName = 'sql-server-profiler-tool';
         const serviceVersion = context.extension.packageJSON.version;
 
-        const headers = { ...(otelConfig.headers || {}) } as Record<string, string>;
-        const instrumentationKey = this.extractInstrumentationKey(this.appInsightsConnectionString);
-        if (endpoint.includes('applicationinsights.azure.com') && !headers['x-api-key'] && instrumentationKey) {
-            headers['x-api-key'] = instrumentationKey;
-        }
-
         try {
-            // Create resource with service information
-            const resource = resourceFromAttributes({
-                [SEMRESATTRS_SERVICE_NAME]: serviceName,
-                [SEMRESATTRS_SERVICE_VERSION]: serviceVersion,
-                osPlatform: os.platform(),
-                osType: os.type(),
-                osArch: os.arch(),
-                vscodeVersion: vscode.version,
-                vscodeLanguage: vscode.env.language,
-                vscodeRemoteName: vscode.env.remoteName || 'local',
-                vscodeUiKind: vscode.env.uiKind === vscode.UIKind.Desktop ? 'desktop' : 'web',
-                nodeVersion: process.version,
-            });
+            // Initialize Azure Monitor OpenTelemetry
+            if (this.appInsightsConnectionString) {
+                useAzureMonitor({
+                    azureMonitorExporterOptions: {
+                        connectionString: this.appInsightsConnectionString,
+                    },
+                    enableLiveMetrics: true,
+                });
 
-            // Create OTLP exporters
-            const traceExporter = new OTLPTraceExporter({
-                url: `${endpoint}/v1/traces`,
-                headers,
-            });
-
-            const metricExporter = new OTLPMetricExporter({
-                url: `${endpoint}/v1/metrics`,
-                headers,
-            });
-
-            const metricReader = new PeriodicExportingMetricReader({
-                exporter: metricExporter,
-                exportIntervalMillis: 60000, // Export every 60 seconds
-            });
-
-            // Initialize the SDK
-            this.sdk = new NodeSDK({
-                resource,
-                traceExporter,
-                metricReader,
-                instrumentations: [
-                    getNodeAutoInstrumentations({
-                        // eslint-disable-next-line @typescript-eslint/naming-convention
-                        '@opentelemetry/instrumentation-fs': {
-                            enabled: false, // Disable fs instrumentation to reduce noise
-                        },
-                    }),
-                ],
-            });
-
-            this.sdk.start();
-            Logger.info(`OpenTelemetry initialized with endpoint: ${endpoint}`);
+                Logger.info('Azure Monitor OpenTelemetry initialized successfully');
+            } else {
+                Logger.warn('No Application Insights connection string provided, telemetry will be disabled');
+                this.isEnabled = false;
+            }
 
             // Get tracer and meter
             this.tracer = trace.getTracer(serviceName, serviceVersion);
@@ -142,10 +94,7 @@ export class OpenTelemetryService {
             // Create metrics
             this.initializeMetrics();
 
-            // Register shutdown hook
-            context.subscriptions.push({
-                dispose: () => this.shutdown()
-            });
+            // No need for shutdown hook with useAzureMonitor - it handles cleanup automatically
 
         } catch (error) {
             Logger.error('Failed to initialize OpenTelemetry: ' + (error instanceof Error ? error.message : String(error)));
@@ -351,32 +300,6 @@ export class OpenTelemetryService {
             .replace(/(Uid=.*?;)/gi, 'Uid=***;')
             .replace(/(Pwd=.*?;)/gi, 'Pwd=***;')
             .replace(/(Data Source=.*?;)/gi, 'Data Source=***;');
-    }
-
-    /**
-     * Extract instrumentation key from an Application Insights connection string
-     */
-    private extractInstrumentationKey(connectionString?: string): string | undefined {
-        if (!connectionString) {
-            return undefined;
-        }
-
-        const match = connectionString.match(/InstrumentationKey=([^;]+)/i);
-        return match?.[1];
-    }
-
-    /**
-     * Shutdown the OpenTelemetry SDK
-     */
-    public async shutdown(): Promise<void> {
-        if (this.sdk) {
-            try {
-                await this.sdk.shutdown();
-                Logger.info('OpenTelemetry SDK shut down successfully');
-            } catch (error) {
-                Logger.error('Error shutting down OpenTelemetry SDK: ' + (error instanceof Error ? error.message : String(error)));
-            }
-        }
     }
 
     /**

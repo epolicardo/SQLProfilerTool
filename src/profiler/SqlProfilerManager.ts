@@ -153,7 +153,7 @@ export class SqlProfilerManager {
 
         const otelService = OpenTelemetryService.getInstance();
         const span = otelService?.startSpan('profiler.startProfiling', {
-            'profiler.sessionName': this.sessionName,
+            profilerSessionName: this.sessionName,
         });
 
         try {
@@ -167,7 +167,7 @@ export class SqlProfilerManager {
             if (selectedProfile) {
                 console.log('Attempting to connect using selected profile...');
                 const connectSpan = otelService?.startSpan('profiler.connectUsingPool', {
-                    'connection.profile': selectedProfile,
+                    connectionProfile: selectedProfile,
                 });
                 try {
                     await this.connectUsingPool();
@@ -227,8 +227,8 @@ export class SqlProfilerManager {
             // OpenTelemetry metrics
             otelService?.recordEventCaptured('profiling_session_started');
             span?.setAttributes({
-                'profiler.serverType': isAzure ? 'azure' : 'sqlserver',
-                'profiler.pollingInterval': this.pollingIntervalMs,
+                profilerServerType: isAzure ? 'azure' : 'sqlserver',
+                profilerPollingInterval: this.pollingIntervalMs,
             });
 
             // Telemetry: profiling started with server type
@@ -259,7 +259,7 @@ export class SqlProfilerManager {
             Logger.error('Failed to start profiling', error);
             otelService?.recordException(span!, error as Error);
             otelService?.recordError('profiling_start_failed', {
-                'error.message': (error as Error).message,
+                errorMessage: (error as Error).message,
             });
             span?.end();
             throw error;
@@ -285,13 +285,13 @@ export class SqlProfilerManager {
 
             // OpenTelemetry metrics
             otelService?.recordQueryDuration(sessionDuration, {
-                'metric.type': 'session_duration',
-                'profiler.serverType': this.detectedDatabaseType || 'unknown',
+                metricType: 'session_duration',
+                profilerServerType: this.detectedDatabaseType || 'unknown',
             });
             span?.setAttributes({
-                'profiler.sessionDuration': sessionDuration,
-                'profiler.totalEvents': totalEvents,
-                'profiler.serverType': this.detectedDatabaseType || 'unknown',
+                profilerSessionDuration: sessionDuration,
+                profilerTotalEvents: totalEvents,
+                profilerServerType: this.detectedDatabaseType || 'unknown',
             });
 
             // Telemetry: profiling session ended

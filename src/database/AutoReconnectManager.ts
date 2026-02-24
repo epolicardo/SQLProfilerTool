@@ -161,26 +161,26 @@ export class AutoReconnectManager {
             switch (event.type) {
                 case 'attempt':
                     otelService.recordReconnection(false, {
-                        'reconnect.poolKey': event.poolKey,
-                        'reconnect.attempt': event.attempt?.attempt.toString() || '0',
-                        'reconnect.errorType': event.attempt?.errorType || 'unknown',
+                        reconnectPoolKey: event.poolKey,
+                        reconnectAttempt: event.attempt?.attempt.toString() || '0',
+                        reconnectErrorType: event.attempt?.errorType || 'unknown',
                     });
                     break;
                 case 'success':
                     otelService.recordReconnection(true, {
-                        'reconnect.poolKey': event.poolKey,
-                        'reconnect.totalAttempts': event.totalAttempts?.toString() || '0',
+                        reconnectPoolKey: event.poolKey,
+                        reconnectTotalAttempts: event.totalAttempts?.toString() || '0',
                     });
                     break;
                 case 'failure':
                     otelService.recordError('reconnect_failure', {
-                        'reconnect.poolKey': event.poolKey,
-                        'reconnect.totalAttempts': event.totalAttempts?.toString() || '0',
+                        reconnectPoolKey: event.poolKey,
+                        reconnectTotalAttempts: event.totalAttempts?.toString() || '0',
                     });
                     break;
                 case 'circuit-breaker-open':
                     otelService.recordError('circuit_breaker_opened', {
-                        'reconnect.poolKey': event.poolKey,
+                        reconnectPoolKey: event.poolKey,
                     });
                     break;
                 case 'circuit-breaker-closed':
