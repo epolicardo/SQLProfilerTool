@@ -1,18 +1,21 @@
-# Source TypeScript files (but keep webview assets)
-src/**/*.ts
-src/**/tsconfig.json
-src/**/*.map
+# Source TypeScript files and build artifacts
+src/**
+out/**
 .vscode/**
 .vscode-test/**
 
-# Keep webview files (CSS, JS)
+# Keep only bundled distribution
+!dist/**
+
+# Keep webview files in source (will be bundled)
 !src/webview/**/*.css
 !src/webview/**/*.js
 !src/webview/**/*.html
 
-# Build files
+# Build configuration files
 tsconfig.json
 .eslintrc.json
+webpack.config.js
 
 # Documentation
 Documentation/**

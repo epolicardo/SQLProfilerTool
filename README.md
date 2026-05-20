@@ -1,3 +1,53 @@
+## 📊 Telemetry & Observability
+
+This extension includes **OpenTelemetry instrumentation** for comprehensive observability with distributed tracing, metrics, and structured logging.
+
+### ✅ Enabled by Default
+**Telemetry is ON by default** to help us improve the extension quality and performance. Your privacy is our priority:
+
+- 🔒 **Automatic sanitization** of all sensitive data (passwords, connection strings, SQL queries)
+- 📊 **Anonymous metrics only**: usage patterns, performance data, error rates
+- ☁️ **Default destination**: Azure Application Insights (OTLP)
+- ⚙️ **Full control**: easily disable via `sqlProfiler.telemetryEnabled: false`
+- 🌍 **Respects VS Code global settings**: follows your VS Code telemetry preferences
+
+### Features
+- **Distributed Tracing**: Track operation flows across profiling sessions
+- **Metrics Collection**: Monitor connection pool health, query durations, and error rates  
+- **Structured Logging**: Correlate logs with traces for better debugging
+- **Multi-Backend Support**: Send to Jaeger, Grafana, Datadog, Application Insights, etc.
+
+### Quick Setup
+
+**To view telemetry data** (run a local Jaeger instance):
+```bash
+docker run -d -p 4318:4318 -p 16686:16686 jaegertracing/all-in-one
+```
+View at: http://localhost:16686
+
+Then set the endpoint to `http://localhost:4318` in settings.
+
+**To disable telemetry**:
+```json
+{
+  "sqlProfiler.telemetryEnabled": false
+}
+```
+
+**To use a custom backend**:
+```json
+{
+  "sqlProfiler.openTelemetry": {
+    "endpoint": "https://your-otlp-endpoint.com",
+    "headers": {
+      "Authorization": "Bearer YOUR_TOKEN"
+    }
+  }
+}
+```
+
+📚 **Learn more**: [OpenTelemetry Quick Start](Documentation/OPENTELEMETRY-QUICKSTART.md) | [Full Documentation](Documentation/OPENTELEMETRY-IMPLEMENTATION.md)
+
 # SQL Server Profiler Tool
 
 [![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)](https://marketplace.visualstudio.com/items?itemName=epolicardo.sql-server-profiler-tool)
@@ -154,14 +204,41 @@ También puedes configurar una cadena de conexión directa:
 }
 ```
 
-### 2. Comandos disponibles
+### 2. Método de captura de eventos
+
+La extensión utiliza el **modo ADS (Azure Data Studio Compatible)** para la captura de eventos:
+
+#### 🔄 **Modo ADS (Azure Data Studio Compatible)**
+- Captura idéntica a Azure Data Studio Profiler
+- Probado y confiable
+- Compatible con workflows existentes de ADS
+
+> **Nota**: El modo "default" está temporalmente deshabilitado y será re-habilitado en una versión futura después de correcciones.
+
+**Configuración (opcional):**
+
+Si en alguna versión futura está disponible otra opción, puedes configurarla en:
+
+**Opción 1 - Settings UI:**
+1. Abre Settings (`Ctrl+,`)
+2. Busca: `SQL Profiler: Profiler Mode`
+
+**Opción 2 - settings.json:**
+```json
+{
+    "sqlProfiler.profilerMode": "ads"
+}
+```
+
+### 3. Comandos disponibles
 
 - **SQL Profiler: Open SQL Server Profiler** - Abre la interfaz del profiler
 - **SQL Profiler: Start SQL Server Profiling** - Inicia la captura de eventos
 - **SQL Profiler: Stop SQL Server Profiling** - Detiene la captura
 - **SQL Profiler: Clear Profiler Results** - Limpia los resultados actuales
+- **SQL Profiler: Change Profiler Mode** - Cambia entre modo default y ADS compatible
 
-### 3. Interfaz del Profiler
+### 4. Interfaz del Profiler
 
 La interfaz incluye:
 - **Selector de conexión**: Elige entre las conexiones mssql configuradas
@@ -171,7 +248,7 @@ La interfaz incluye:
 - **Tabla de resultados**: Con ordenamiento por columnas
 - **Contador de eventos**: Muestra el total de eventos capturados
 
-### 4. Filtros y búsqueda
+### 5. Filtros y búsqueda
 
 - **Filtro por base de datos**: Muestra solo eventos de una base de datos específica
 - **Filtro por tipo de evento**: RPC Completed o SQL Batch Completed

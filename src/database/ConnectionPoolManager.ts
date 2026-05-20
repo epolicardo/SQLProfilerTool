@@ -4,6 +4,7 @@ the 'mssql' module using the `sql` variable in your TypeScript code. */
 import * as sql from 'mssql';
 import * as vscode from 'vscode';
 import { Logger } from '../utils/Logger';
+import { OpenTelemetryService } from '../utils/OpenTelemetryService';
 
 export interface PoolConfig {
     server: string;
@@ -51,9 +52,20 @@ export class ConnectionPoolManager {
 
     /**
      * Gets or creates a connection pool for the given configuration
+     * Will recreate pool if configuration has changed
      */
     async getPool(config: PoolConfig): Promise<sql.ConnectionPool> {
         const poolKey = this.generatePoolKey(config);
+
+        // Check if we have an existing pool with potentially outdated config
+        // Look for pools with same server/db/user but different key (config changed)
+        const baseKey = `${config.poolName || 'default'}_${config.server}_${config.database}_${config.user || 'integrated'}`;
+        for (const [existingKey, existingPool] of this.pools.entries()) {
+            if (existingKey.startsWith(baseKey.replace(/[^a-zA-Z0-9_]/g, '_')) && existingKey !== poolKey) {
+                Logger.info(`Configuration changed for ${baseKey}, invalidating old pool: ${existingKey}`);
+                await this.closePool(existingKey);
+            }
+        }
 
         // Return existing pool if it exists and is connected
         if (this.pools.has(poolKey)) {
@@ -70,7 +82,7 @@ export class ConnectionPoolManager {
         }
 
         // Create new pool
-        Logger.info(`Creating new connection pool: ${poolKey}`);
+        Logger.info(`Creating new connection pool with current configuration: ${poolKey}`);
         const pool = await this.createNewPool(config, poolKey);
 
         return pool;
@@ -97,6 +109,11 @@ export class ConnectionPoolManager {
             // Azure SQL needs longer timeouts due to network latency and throttling
             requestTimeout: isAzureSql ? 180000 : 90000,  // 3 min for Azure, 90s for on-prem
             connectionTimeout: isAzureSql ? 60000 : 30000,  // 1 min for Azure, 30s for on-prem
+            // Tedious options (including appName for client identification)
+            options: {
+                appName: 'SQL Profiler Tool for VS Code',  // Unique app name for XE filtering
+                ...(config.options || {})  // Merge with any existing options
+            },
             pool: {
                 max: config.maxConnections || 5,
                 min: config.minConnections || 0,  // Allow pool to be completely idle
@@ -110,11 +127,6 @@ export class ConnectionPoolManager {
                 propagateCreateError: false  // Don't propagate errors during pool creation
             }
         };
-
-        // Add options if they exist
-        if (config.options) {
-            poolConfig.options = { ...config.options };
-        }
 
         const pool = new sql.ConnectionPool(poolConfig);
 
@@ -172,14 +184,18 @@ export class ConnectionPoolManager {
 
     /**
      * Generates a unique key for the pool based on connection parameters
+     * Includes critical config that should trigger pool recreation if changed
      */
     private generatePoolKey(config: PoolConfig): string {
         const server = config.server || 'localhost';
         const database = config.database || 'master';
         const user = config.user || 'integrated';
         const poolName = config.poolName || 'default';
+        // Include encrypt and trustServerCertificate to detect config changes
+        const encrypt = config.encrypt !== undefined ? config.encrypt : false;
+        const trustCert = config.trustServerCertificate !== undefined ? config.trustServerCertificate : true;
 
-        return `${poolName}_${server}_${database}_${user}`.replace(/[^a-zA-Z0-9_]/g, '_');
+        return `${poolName}_${server}_${database}_${user}_enc${encrypt}_trust${trustCert}`.replace(/[^a-zA-Z0-9_]/g, '_');
     }
 
     /**
@@ -197,7 +213,7 @@ export class ConnectionPoolManager {
             // Access internal pool statistics (these are private properties in mssql)
             const poolInternal = (pool as any).pool;
 
-            return {
+            const stats = {
                 poolName: poolKey,
                 connected: pool.connected,
                 connecting: pool.connecting,
@@ -209,6 +225,18 @@ export class ConnectionPoolManager {
                 max: config.maxConnections || 5,
                 idleTimeout: config.idleTimeout || 30000
             };
+
+            // Update OpenTelemetry metrics
+            const otelService = OpenTelemetryService.getInstance();
+            if (otelService?.isActive()) {
+                otelService.updateConnectionPoolStats(
+                    stats.borrowed,
+                    stats.available,
+                    stats.size
+                );
+            }
+
+            return stats;
         } catch (error) {
             Logger.errorSilent(`Error getting pool stats for ${poolKey}:`, error);
             return {
@@ -258,6 +286,17 @@ export class ConnectionPoolManager {
                 this.poolConfigs.delete(poolKey);
             }
         }
+    }
+
+    /**
+     * Invalidates and closes a pool for a specific configuration
+     * Forces recreation on next getPool() call
+     * Use when configuration changes require a new connection
+     */
+    async invalidatePoolForConfig(config: PoolConfig): Promise<void> {
+        const poolKey = this.generatePoolKey(config);
+        Logger.info(`Invalidating pool for config changes: ${poolKey}`);
+        await this.closePool(poolKey);
     }
 
     /**

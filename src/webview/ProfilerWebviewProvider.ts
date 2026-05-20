@@ -1,10 +1,18 @@
 import * as vscode from 'vscode';
+import * as crypto from 'crypto';
 
 export class ProfilerWebviewProvider {
     constructor(
         private readonly context: vscode.ExtensionContext,
         private readonly panel: vscode.WebviewPanel
     ) { }
+
+    /**
+     * Generate a cryptographically secure nonce for CSP
+     */
+    private getNonce(): string {
+        return crypto.randomBytes(16).toString('base64');
+    }
 
     public getWebviewContent(): string {
         const scriptUri = this.panel.webview.asWebviewUri(
@@ -14,13 +22,16 @@ export class ProfilerWebviewProvider {
             vscode.Uri.joinPath(this.context.extensionUri, 'src', 'webview', 'profiler.css')
         );
 
+        // Generate nonce for CSP
+        const nonce = this.getNonce();
+
         return `
             <!DOCTYPE html>
             <html lang="en">
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${this.panel.webview.cspSource} 'unsafe-inline'; script-src ${this.panel.webview.cspSource} 'unsafe-inline'; img-src ${this.panel.webview.cspSource} data:; font-src ${this.panel.webview.cspSource};">
+                <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${this.panel.webview.cspSource}; script-src 'nonce-${nonce}'; img-src ${this.panel.webview.cspSource} data:; font-src ${this.panel.webview.cspSource};">
                 <link rel="stylesheet" href="${styleUri}">
                 <title>SQL Server Profiler</title>
             </head>
@@ -103,7 +114,7 @@ export class ProfilerWebviewProvider {
                     </div>
                 </div>
 
-                <script src="${scriptUri}"></script>
+                <script nonce="${nonce}" src="${scriptUri}"></script>
             </body>
             </html>
         `;

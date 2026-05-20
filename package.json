@@ -2,10 +2,11 @@
   "name": "sql-server-profiler-tool",
   "displayName": "SQL Server Profiler Tool",
   "description": "SQL Server profiler extension using Extended Events for real-time query capture and analysis with advanced connection pooling, auto-reconnection system, and persistent UI state",
-  "version": "0.3.7",
+  "icon": "resources/Designer.png",
+  "version": "0.5.0",
   "publisher": "epolicardo",
   "engines": {
-    "vscode": "^1.74.0"
+    "vscode": "^1.106.0"
   },
   "categories": [
     "Other",
@@ -24,140 +25,8 @@
     "reliability"
   ],
   "activationEvents": [],
-  "main": "./out/extension.js",
+  "main": "./dist/extension.js",
   "contributes": {
-    "commands": [
-      {
-        "command": "sqlProfiler.startProfiling",
-        "title": "Start SQL Server Profiling",
-        "category": "SQL Profiler",
-        "icon": "$(play)"
-      },
-      {
-        "command": "sqlProfiler.stopProfiling",
-        "title": "Stop SQL Server Profiling",
-        "category": "SQL Profiler",
-        "icon": "$(debug-stop)"
-      },
-      {
-        "command": "sqlProfiler.openProfiler",
-        "title": "Open SQL Server Profiler",
-        "category": "SQL Profiler",
-        "icon": "$(database)"
-      },
-      {
-        "command": "sqlProfiler.clearResults",
-        "title": "Clear Profiler Results",
-        "category": "SQL Profiler",
-        "icon": "$(clear-all)"
-      },
-      {
-        "command": "sqlProfiler.manageConnections",
-        "title": "Manage Database Connections",
-        "category": "SQL Profiler",
-        "icon": "$(server-environment)"
-      },
-      {
-        "command": "sqlProfiler.showLogs",
-        "title": "Show SQL Profiler Logs",
-        "category": "SQL Profiler",
-        "icon": "$(output)"
-      },
-      {
-        "command": "sqlProfiler.clearStoredPassword",
-        "title": "Clear Stored Password",
-        "category": "SQL Profiler",
-        "icon": "$(key)"
-      },
-      {
-        "command": "sqlProfiler.clearAllStoredPasswords",
-        "title": "Clear All Stored Passwords",
-        "category": "SQL Profiler",
-        "icon": "$(trash)"
-      },
-      {
-        "command": "sqlProfiler.showStoredPasswords",
-        "title": "Show Connections with Stored Passwords",
-        "category": "SQL Profiler",
-        "icon": "$(list-unordered)"
-      },
-      {
-        "command": "sqlProfiler.showReconnectStats",
-        "title": "Show Auto-Reconnection Statistics",
-        "category": "SQL Profiler",
-        "icon": "$(pulse)"
-      },
-      {
-        "command": "sqlProfiler.resetCircuitBreaker",
-        "title": "Reset Connection Circuit Breaker",
-        "category": "SQL Profiler",
-        "icon": "$(debug-restart)"
-      },
-      {
-        "command": "sqlProfiler.configureAutoReconnect",
-        "title": "Configure Auto-Reconnection Settings",
-        "category": "SQL Profiler",
-        "icon": "$(settings-gear)"
-      },
-      {
-        "command": "sqlProfiler.startWithAutoRecovery",
-        "title": "Start Profiling with Enhanced Auto-Recovery",
-        "category": "SQL Profiler",
-        "icon": "$(shield)"
-      },
-      {
-        "command": "sqlProfiler.diagnoseAzureSQL",
-        "title": "Diagnose Azure SQL Database Connection",
-        "category": "SQL Profiler",
-        "icon": "$(pulse)"
-      }
-    ],
-    "menus": {
-      "commandPalette": [
-        {
-          "command": "sqlProfiler.startProfiling"
-        },
-        {
-          "command": "sqlProfiler.stopProfiling"
-        },
-        {
-          "command": "sqlProfiler.openProfiler"
-        },
-        {
-          "command": "sqlProfiler.clearResults"
-        },
-        {
-          "command": "sqlProfiler.manageConnections"
-        },
-        {
-          "command": "sqlProfiler.showLogs"
-        },
-        {
-          "command": "sqlProfiler.clearStoredPassword"
-        },
-        {
-          "command": "sqlProfiler.clearAllStoredPasswords"
-        },
-        {
-          "command": "sqlProfiler.showStoredPasswords"
-        },
-        {
-          "command": "sqlProfiler.showReconnectStats"
-        },
-        {
-          "command": "sqlProfiler.resetCircuitBreaker"
-        },
-        {
-          "command": "sqlProfiler.configureAutoReconnect"
-        },
-        {
-          "command": "sqlProfiler.startWithAutoRecovery"
-        },
-        {
-          "command": "sqlProfiler.diagnoseAzureSQL"
-        }
-      ]
-    },
     "configuration": {
       "title": "SQL Server Profiler Tool",
       "properties": {
@@ -250,7 +119,7 @@
           "default": {
             "maxRetries": 5,
             "initialDelay": 1000,
-            "backoffFactor": 2.0,
+            "backoffFactor": 2,
             "maxDelay": 30000,
             "connectionTimeout": 15000,
             "enableCircuitBreaker": true,
@@ -275,9 +144,9 @@
             },
             "backoffFactor": {
               "type": "number",
-              "default": 2.0,
-              "minimum": 1.0,
-              "maximum": 5.0,
+              "default": 2,
+              "minimum": 1,
+              "maximum": 5,
               "description": "Exponential backoff factor for reconnection delays"
             },
             "maxDelay": {
@@ -314,22 +183,205 @@
               "description": "Time to wait before attempting to close the circuit breaker in milliseconds"
             }
           }
+        },
+        "sqlProfiler.profilerMode": {
+          "type": "string",
+          "enum": [
+            "ads"
+          ],
+          "enumDescriptions": [
+            "Azure Data Studio Profiler compatible mode - uses the same event capture and mapping as ADS (recommended)"
+          ],
+          "default": "ads",
+          "markdownDescription": "**Event Capture Mode**:\n\n- `ads`: Azure Data Studio compatible mode - captures events using the same query logic as ADS Profiler (recommended)\n\n*Note: The 'default' mode is temporarily disabled and will be re-enabled in a future version after fixes*"
+        },
+        "sqlProfiler.telemetryEnabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "**Enable telemetry and OpenTelemetry instrumentation** for SQL Profiler Tool.\n\n✅ **Enabled by default** to help improve the extension.\n\n� **Telemetry data is sent to Azure Application Insights** using OpenTelemetry.\n\n🔒 **Privacy guaranteed**: All sensitive data (passwords, connection strings, SQL queries) is automatically sanitized. Only anonymous usage patterns and performance metrics are collected.\n\n💡 You can disable this at any time. Also respects VS Code's global telemetry settings."
         }
       }
+    },
+    "commands": [
+      {
+        "command": "sqlProfiler.startProfiling",
+        "title": "Start SQL Server Profiling",
+        "category": "SQL Profiler",
+        "icon": "$(play)"
+      },
+      {
+        "command": "sqlProfiler.stopProfiling",
+        "title": "Stop SQL Server Profiling",
+        "category": "SQL Profiler",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "sqlProfiler.openProfiler",
+        "title": "Open SQL Server Profiler",
+        "category": "SQL Profiler",
+        "icon": "$(database)"
+      },
+      {
+        "command": "sqlProfiler.changeProfilerMode",
+        "title": "Change Profiler Capture Mode",
+        "category": "SQL Profiler",
+        "icon": "$(settings)"
+      },
+      {
+        "command": "sqlProfiler.clearResults",
+        "title": "Clear Profiler Results",
+        "category": "SQL Profiler",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "sqlProfiler.manageConnections",
+        "title": "Manage Database Connections",
+        "category": "SQL Profiler",
+        "icon": "$(server-environment)"
+      },
+      {
+        "command": "sqlProfiler.showLogs",
+        "title": "Show SQL Profiler Logs",
+        "category": "SQL Profiler",
+        "icon": "$(output)"
+      },
+      {
+        "command": "sqlProfiler.clearStoredPassword",
+        "title": "Clear Stored Password",
+        "category": "SQL Profiler",
+        "icon": "$(key)"
+      },
+      {
+        "command": "sqlProfiler.clearAllStoredPasswords",
+        "title": "Clear All Stored Passwords",
+        "category": "SQL Profiler",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "sqlProfiler.showStoredPasswords",
+        "title": "Show Connections with Stored Passwords",
+        "category": "SQL Profiler",
+        "icon": "$(list-unordered)"
+      },
+      {
+        "command": "sqlProfiler.showReconnectStats",
+        "title": "Show Auto-Reconnection Statistics",
+        "category": "SQL Profiler",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "sqlProfiler.resetCircuitBreaker",
+        "title": "Reset Connection Circuit Breaker",
+        "category": "SQL Profiler",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "sqlProfiler.configureAutoReconnect",
+        "title": "Configure Auto-Reconnection Settings",
+        "category": "SQL Profiler",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "sqlProfiler.startWithAutoRecovery",
+        "title": "Start Profiling with Enhanced Auto-Recovery",
+        "category": "SQL Profiler",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "sqlProfiler.diagnoseAzureSQL",
+        "title": "Diagnose Azure SQL Database Connection",
+        "category": "SQL Profiler",
+        "icon": "$(pulse)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "sqlProfiler",
+          "title": "SQL Profiler",
+          "icon": "resources/Designer.png"
+        }
+      ]
+    },
+    "views": {
+      "sqlProfiler": [
+        {
+          "id": "sqlProfiler.sidebar",
+          "name": "Profiler"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "sqlProfiler.sidebar",
+        "contents": "[Open SQL Server Profiler](command:sqlProfiler.openProfiler)"
+      },
+      {
+        "view": "sqlProfiler.sidebar",
+        "contents": "[Start Profiling](command:sqlProfiler.startProfiling)"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "sqlProfiler.startProfiling"
+        },
+        {
+          "command": "sqlProfiler.stopProfiling"
+        },
+        {
+          "command": "sqlProfiler.openProfiler"
+        },
+        {
+          "command": "sqlProfiler.clearResults"
+        },
+        {
+          "command": "sqlProfiler.manageConnections"
+        },
+        {
+          "command": "sqlProfiler.showLogs"
+        },
+        {
+          "command": "sqlProfiler.clearStoredPassword"
+        },
+        {
+          "command": "sqlProfiler.clearAllStoredPasswords"
+        },
+        {
+          "command": "sqlProfiler.showStoredPasswords"
+        },
+        {
+          "command": "sqlProfiler.showReconnectStats"
+        },
+        {
+          "command": "sqlProfiler.resetCircuitBreaker"
+        },
+        {
+          "command": "sqlProfiler.configureAutoReconnect"
+        },
+        {
+          "command": "sqlProfiler.startWithAutoRecovery"
+        },
+        {
+          "command": "sqlProfiler.diagnoseAzureSQL"
+        }
+      ]
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile && npm run lint",
+    "vscode:prepublish": "npm run package",
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js",
-    "package": "vsce package",
+    "package-vsce": "npx @vscode/vsce package",
     "package-hotfix": "node scripts/increment-and-package.js",
-    "publish": "vsce publish",
-    "prepublish": "npm run compile && npm run lint",
-    "clean": "rimraf out",
+    "publish": "npx @vscode/vsce publish",
+    "clean": "rimraf out dist",
     "rebuild": "npm run clean && npm run compile"
   },
   "repository": {
@@ -349,14 +401,22 @@
     "@types/mssql": "^9.1.8",
     "@types/node": "^16.18.126",
     "@types/tedious": "^18.0.0",
-    "@types/vscode": "^1.74.0",
+    "@types/vscode": "^1.106.1",
     "@typescript-eslint/eslint-plugin": "^5.45.0",
     "@typescript-eslint/parser": "^5.45.0",
+    "@vscode/vsce": "^3.2.0",
     "eslint": "^8.28.0",
     "glob": "^8.0.3",
-    "typescript": "^4.9.4"
+    "rimraf": "^3.0.2",
+    "ts-loader": "^9.5.4",
+    "typescript": "^4.9.4",
+    "webpack": "^5.105.2",
+    "webpack-cli": "^5.1.4"
   },
   "dependencies": {
+    "@azure/monitor-opentelemetry": "^1.9.0",
+    "@opentelemetry/api": "^1.9.0",
+    "@vscode/extension-telemetry": "^1.2.0",
     "mssql": "^9.1.1"
   }
 }

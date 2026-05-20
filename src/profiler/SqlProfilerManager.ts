@@ -3,6 +3,9 @@ import * as vscode from 'vscode';
 import { Logger } from '../utils/Logger';
 import { ConnectionPoolManager, PoolConfig, PoolStats } from '../database/ConnectionPoolManager';
 import { AutoReconnectManager, ConnectionErrorType } from '../database/AutoReconnectManager';
+import { TelemetryService } from '../utils/TelemetryService';
+import { OpenTelemetryService } from '../utils/OpenTelemetryService';
+import { EventDeduplicator, isInternalQuery } from '../utils/deduplicationUtils';
 
 export interface MssqlConnection {
     profileName: string;
@@ -46,7 +49,7 @@ export class SqlProfilerManager {
     private isProfilering = false;
     private sessionName = 'VSCodeProfilerSession';
     private results: ProfilerEvent[] = [];
-    private pollingInterval: any | undefined;
+    private pollingInterval: NodeJS.Timeout | undefined;
     private pollingIntervalMs = 500; // Default polling interval, adjusted based on platform
     private context: vscode.ExtensionContext | undefined;
     private hasRunInitialDiagnostics = false; // Flag to run diagnostics only once
@@ -69,12 +72,20 @@ export class SqlProfilerManager {
     private lastLogTime: Map<string, number> = new Map();
     private readonly logThrottleMs = 10000; // Only log same message once per 10 seconds
 
+    // Event deduplication to prevent showing the same event twice
+    private deduplicator: EventDeduplicator;
+
     constructor(context?: vscode.ExtensionContext) {
         const config = vscode.workspace.getConfiguration('sqlProfiler');
         this.sessionName = config.get<string>('sessionName') || 'VSCodeProfilerSession';
         this.context = context;
         this.poolManager = ConnectionPoolManager.getInstance();
         this.autoReconnectManager = AutoReconnectManager.getInstance();
+        this.deduplicator = new EventDeduplicator({
+            windowMs: 5000, // 5 second deduplication window
+            maxSignatures: 1000,
+            filterInternalQueries: true,
+        });
         this.setupReconnectEventHandlers();
     }
 
@@ -149,6 +160,11 @@ export class SqlProfilerManager {
             throw new Error('Profiling is already running');
         }
 
+        const otelService = OpenTelemetryService.getInstance();
+        const span = otelService?.startSpan('profiler.startProfiling', {
+            profilerSessionName: this.sessionName,
+        });
+
         try {
             Logger.info('Starting profiling...');
             this.hasRunInitialDiagnostics = false; // Reset for new session
@@ -159,8 +175,18 @@ export class SqlProfilerManager {
 
             if (selectedProfile) {
                 console.log('Attempting to connect using selected profile...');
-                await this.connectUsingPool();
-                console.log('Connected successfully using profile with pool');
+                const connectSpan = otelService?.startSpan('profiler.connectUsingPool', {
+                    connectionProfile: selectedProfile,
+                });
+                try {
+                    await this.connectUsingPool();
+                    console.log('Connected successfully using profile with pool');
+                    otelService?.endSpan(connectSpan!);
+                } catch (error) {
+                    otelService?.recordException(connectSpan!, error as Error);
+                    connectSpan?.end();
+                    throw error;
+                }
             } else {
                 // Fallback to connection string method
                 console.log('No profile selected, trying connection string...');
@@ -184,7 +210,19 @@ export class SqlProfilerManager {
 
             // Create Extended Events session
             console.log('Creating Extended Events session...');
-            await this.createXESession();
+            const createSessionSpan = otelService?.startSpan('profiler.createXESession');
+            try {
+                // Show progress message to user
+                const serverType = this.currentConnection?.server?.includes('.database.windows.net') ? 'Azure SQL Database' : 'SQL Server';
+                vscode.window.showInformationMessage(`🚀 SQL Profiler: Creating profiler session on ${serverType}...`);
+                
+                await this.createXESession();
+                otelService?.endSpan(createSessionSpan!);
+            } catch (error) {
+                otelService?.recordException(createSessionSpan!, error as Error);
+                createSessionSpan?.end();
+                throw error;
+            }
 
             // Start the session
             console.log('Starting Extended Events session...');
@@ -199,6 +237,22 @@ export class SqlProfilerManager {
             console.log(`⏱️ Polling configured: ${this.pollingIntervalMs}ms for ${isAzure ? 'Azure SQL' : 'SQL Server'}`);
             console.log(`⏱️ Profiler started at: ${new Date(this.profilerStartTime).toISOString()}`);
 
+            // OpenTelemetry metrics
+            otelService?.recordEventCaptured('profiling_session_started');
+            span?.setAttributes({
+                profilerServerType: isAzure ? 'azure' : 'sqlserver',
+                profilerPollingInterval: this.pollingIntervalMs,
+            });
+
+            // Telemetry: profiling started with server type
+            const telemetry = TelemetryService.getInstance();
+            const sessionStartTime = Date.now();
+            telemetry?.sendEvent('profilingSessionStarted', {
+                serverType: isAzure ? 'azure' : 'sqlserver',
+                pollingInterval: this.pollingIntervalMs.toString(),
+                profilerMode: vscode.workspace.getConfiguration('sqlProfiler').get<string>('profilerMode', 'default')
+            });
+
             // Start polling for results
             console.log('Starting polling for results...');
             this.startPolling();
@@ -211,10 +265,16 @@ export class SqlProfilerManager {
             console.log('Pool status:', this.pool ? 'Connected' : 'Not connected');
 
             Logger.info('Profiling started successfully!');
+            otelService?.endSpan(span!);
 
         } catch (error) {
             this.isProfilering = false;
             Logger.error('Failed to start profiling', error);
+            otelService?.recordException(span!, error as Error);
+            otelService?.recordError('profiling_start_failed', {
+                errorMessage: (error as Error).message,
+            });
+            span?.end();
             throw error;
         }
     }
@@ -222,64 +282,110 @@ export class SqlProfilerManager {
     async stopProfiling(): Promise<void> {
         Logger.info('Stopping profiling...');
 
+        const otelService = OpenTelemetryService.getInstance();
+        const span = otelService?.startSpan('profiler.stopProfiling');
+
         if (!this.isProfilering) {
             Logger.info('Profiling is not running, nothing to stop');
+            span?.end();
             return;
         }
 
-        // Set flags first to prevent new polling attempts
-        this.isProfilering = false;
-        this.hasRunInitialDiagnostics = false; // Reset for next profiling session
-        this.isCollectingResults = false; // Reset semaphore
-        this.lastReadTimestamp = null; // Reset streaming timestamp
-        this.eventIdCounter = 0; // Reset ID counter for fresh session
+        try {
+            // Calculate session metrics before cleanup
+            const sessionDuration = this.profilerStartTime ? Date.now() - this.profilerStartTime : 0;
+            const totalEvents = this.results.length;
 
-        // Stop polling interval first
-        if (this.pollingInterval) {
-            clearInterval(this.pollingInterval);
-            this.pollingInterval = undefined;
-            Logger.info('Polling interval cleared');
-        }
+            // OpenTelemetry metrics
+            otelService?.recordQueryDuration(sessionDuration, {
+                metricType: 'session_duration',
+                profilerServerType: this.detectedDatabaseType || 'unknown',
+            });
+            span?.setAttributes({
+                profilerSessionDuration: sessionDuration,
+                profilerTotalEvents: totalEvents,
+                profilerServerType: this.detectedDatabaseType || 'unknown',
+            });
 
-        // Try to stop XE session gracefully
-        if (this.pool) {
-            try {
-                Logger.info('Attempting to stop Extended Events session');
-                await this.stopXESession();
-                Logger.info('Extended Events session stopped successfully');
-            } catch (error) {
-                Logger.warn('Error stopping XE session (non-critical):', error);
+            // Telemetry: profiling session ended
+            const telemetry = TelemetryService.getInstance();
+            telemetry?.sendMetric('profilingSessionDuration', Math.round(sessionDuration / 1000), {
+                serverType: this.detectedDatabaseType || 'unknown'
+            });
+            telemetry?.sendMetric('profilingSessionEventCount', totalEvents, {
+                serverType: this.detectedDatabaseType || 'unknown'
+            });
+
+            // Set flags first to prevent new polling attempts
+            this.isProfilering = false;
+            this.hasRunInitialDiagnostics = false; // Reset for next profiling session
+            this.isCollectingResults = false; // Reset semaphore
+            this.lastReadTimestamp = null; // Reset streaming timestamp
+            this.eventIdCounter = 0; // Reset ID counter for fresh session
+            this.profilerStartTime = 0; // Reset start time
+
+            // Stop polling interval first
+            if (this.pollingInterval) {
+                clearInterval(this.pollingInterval);
+                this.pollingInterval = undefined;
+                Logger.info('Polling interval cleared');
             }
 
-            try {
-                Logger.info('Attempting to drop Extended Events session');
-                await this.dropXESession();
-                Logger.info('Extended Events session dropped successfully');
-            } catch (error) {
-                Logger.warn('Error dropping XE session (non-critical):', error);
+            // Try to stop XE session gracefully
+            if (this.pool) {
+                try {
+                    Logger.info('Attempting to stop Extended Events session');
+                    await this.stopXESession();
+                    Logger.info('Extended Events session stopped successfully');
+                } catch (error) {
+                    Logger.warn('Error stopping XE session (non-critical):', error);
+                }
+
+                try {
+                    Logger.info('Attempting to drop Extended Events session');
+                    await this.dropXESession();
+                    Logger.info('Extended Events session dropped successfully');
+                } catch (error) {
+                    Logger.warn('Error dropping XE session (non-critical):', error);
+                }
+
+                // Note: We don't close the pool here as it's managed by the pool manager
+                // and may be reused by other operations
+                this.pool = undefined;
+                this.currentPoolKey = undefined;
+                Logger.info('Pool references cleared');
             }
 
-            // Note: We don't close the pool here as it's managed by the pool manager
-            // and may be reused by other operations
-            this.pool = undefined;
-            this.currentPoolKey = undefined;
-            Logger.info('Pool references cleared');
+            // Clear database type cache to avoid stale data on reconnection
+            this.databaseTypeCache.clear();
+            this.detectedDatabaseType = null; // Reset for next session
+            this.lastAzureTimestamp = null; // Reset Azure sliding window
+            this.lastReadTimestamp = null; // Reset SQL Server streaming
+            this.profilerStartTime = 0; // Reset profiler start time
+            Logger.info('Profiling stopped successfully - database type cache and timestamps cleared');
+            
+            otelService?.endSpan(span!);
+        } catch (error) {
+            Logger.error('Error during profiling stop', error);
+            otelService?.recordException(span!, error as Error);
+            span?.end();
+            throw error;
         }
-
-        // Clear database type cache to avoid stale data on reconnection
-        this.databaseTypeCache.clear();
-        this.detectedDatabaseType = null; // Reset for next session
-        this.lastAzureTimestamp = null; // Reset Azure sliding window
-        this.lastReadTimestamp = null; // Reset SQL Server streaming
-        this.profilerStartTime = 0; // Reset profiler start time
-        Logger.info('Profiling stopped successfully - database type cache and timestamps cleared');
     }
 
     private async isAzureSqlDatabase(pool?: any): Promise<boolean> {
         const poolToUse = pool || this.pool;
-
-        if (!poolToUse || !this.currentPoolKey) {
-            return false;
+        
+        // If no pool available, default to Azure (safest option)
+        if (!poolToUse) {
+            Logger.warn('No pool available for type detection - defaulting to Azure SQL');
+            this.detectedDatabaseType = 'azure';
+            return true;
+        }
+        
+        // Generate pool key for caching
+        if (!this.currentPoolKey && poolToUse.config) {
+            this.currentPoolKey = `${poolToUse.config.server}_${poolToUse.config.database || 'master'}`;
         }
 
         // 🚀 Check session cache first (valid for entire profiling session)
@@ -290,8 +396,8 @@ export class SqlProfilerManager {
         }
 
         // Check memory cache (for backwards compatibility)
-        const cached = this.databaseTypeCache.get(this.currentPoolKey);
         const now = Date.now();
+        const cached = this.currentPoolKey ? this.databaseTypeCache.get(this.currentPoolKey) : undefined;
 
         if (cached && (now - cached.timestamp) < this.cacheTimeoutMs) {
             // Use console.log instead of Logger.info to reduce spam
@@ -303,7 +409,8 @@ export class SqlProfilerManager {
             let isAzure = false;
 
             // Check 1: Look at server name first (fastest and most reliable check)
-            const serverCorrection = this.correctAzureSqlServerFormat(this.currentPoolKey);
+            const poolKeyForCheck = this.currentPoolKey || `${poolToUse.config?.server || 'unknown'}_${poolToUse.config?.database || 'master'}`;
+            const serverCorrection = this.correctAzureSqlServerFormat(poolKeyForCheck);
             const serverName = serverCorrection.corrected.toLowerCase();
 
             if (serverName.includes('.database.windows.net') || serverName.includes('.sql.azuresynapse.net')) {
@@ -312,10 +419,12 @@ export class SqlProfilerManager {
 
                 // Fast path: If server name confirms Azure, skip database queries
                 // Cache immediately and return
-                this.databaseTypeCache.set(this.currentPoolKey, {
-                    isAzure: true,
-                    timestamp: now
-                });
+                if (this.currentPoolKey) {
+                    this.databaseTypeCache.set(this.currentPoolKey, {
+                        isAzure: true,
+                        timestamp: now
+                    });
+                }
                 this.detectedDatabaseType = 'azure';
                 return true;
             } else {
@@ -339,9 +448,14 @@ export class SqlProfilerManager {
                             await serverRequest.query('SELECT TOP 1 1 FROM sys.server_event_sessions');
                             Logger.info('Detected SQL Server (on-premise/managed instance) - server views accessible');
                             isAzure = false;
-                        } catch (serverViewError) {
+                        } catch (serverViewError: any) {
                             // Silently handle expected error on Azure SQL
-                            Logger.info('Server views not accessible - likely Azure SQL Database');
+                            const errorMsg = serverViewError?.message || String(serverViewError);
+                            if (errorMsg.includes('Invalid object name') || errorMsg.includes('sys.server_event_sessions')) {
+                                Logger.info('Server views not accessible (Invalid object name) - confirmed Azure SQL Database');
+                            } else {
+                                Logger.info('Server views not accessible - likely Azure SQL Database');
+                            }
                             isAzure = true;
                         }
                     }
@@ -355,10 +469,12 @@ export class SqlProfilerManager {
             }
 
             // Cache the result in both memory cache and session cache
-            this.databaseTypeCache.set(this.currentPoolKey, {
-                isAzure: isAzure,
-                timestamp: now
-            });
+            if (this.currentPoolKey) {
+                this.databaseTypeCache.set(this.currentPoolKey, {
+                    isAzure: isAzure,
+                    timestamp: now
+                });
+            }
 
             // 🚀 Cache for entire session (no expiration until disconnect)
             this.detectedDatabaseType = isAzure ? 'azure' : 'sqlserver';
@@ -505,6 +621,7 @@ export class SqlProfilerManager {
                 END;
 
                 -- Create new session (database-scoped for Azure SQL)
+                -- Filter to exclude profiler's own queries (appName configured in ConnectionPoolManager)
                 CREATE EVENT SESSION [${this.sessionName}] ON DATABASE
                 ADD EVENT sqlserver.rpc_starting(
                     SET collect_statement=(1)
@@ -515,6 +632,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.rpc_completed(
                     SET collect_statement=(1)
@@ -525,6 +643,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.sql_batch_starting(
                     SET collect_batch_text=(1)
@@ -535,6 +654,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.sql_batch_completed(
                     SET collect_batch_text=(1)
@@ -545,6 +665,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.sql_statement_starting(
                     SET collect_statement=(1)
@@ -555,6 +676,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.sql_statement_completed(
                     SET collect_statement=(1)
@@ -565,6 +687,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.sp_statement_starting(
                     ACTION(
@@ -574,6 +697,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.sp_statement_completed(
                     ACTION(
@@ -583,6 +707,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 )
                 ADD TARGET package0.ring_buffer(
                     SET max_events_limit = 500,  -- Reduced from 2000 for faster consumption
@@ -615,6 +740,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.rpc_completed(
                     SET collect_statement=(1)
@@ -625,6 +751,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.sql_batch_starting(
                     SET collect_batch_text=(1)
@@ -635,16 +762,18 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.sql_batch_completed(
                     SET collect_batch_text=(1)
                     ACTION(
                         sqlserver.client_app_name,
-                        sqlserver.database_name,
                         sqlserver.username,
+                        sqlserver.database_name,
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.sql_statement_starting(
                     SET collect_statement=(1)
@@ -655,6 +784,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.sql_statement_completed(
                     SET collect_statement=(1)
@@ -665,6 +795,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.sp_statement_starting(
                     ACTION(
@@ -674,6 +805,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 ),
                 ADD EVENT sqlserver.sp_statement_completed(
                     ACTION(
@@ -683,6 +815,7 @@ export class SqlProfilerManager {
                         sqlserver.session_id,
                         sqlserver.sql_text
                     )
+                    WHERE sqlserver.client_app_name <> N'SQL Profiler Tool for VS Code'
                 )
                 ADD TARGET package0.event_file(
                     SET filename = N'${this.xelFilePath}.xel',
@@ -701,10 +834,46 @@ export class SqlProfilerManager {
         console.log(createSessionQuery);
         console.log('=== END XE SESSION QUERY ===');
 
-        const request = currentPool.request();
-        await request.query(createSessionQuery);
+        const sessionCreateStart = Date.now();
+        
+        try {
+            const request = currentPool.request();
+            await request.query(createSessionQuery);
+            const sessionCreateDuration = Date.now() - sessionCreateStart;
 
-        console.log('Extended Events session created successfully!');
+            // Telemetry: XE session creation time
+            const telemetry = TelemetryService.getInstance();
+            telemetry?.sendMetric('xeSessionCreateDuration', sessionCreateDuration, {
+                serverType: isAzure ? 'azure' : 'sqlserver'
+            });
+
+            console.log('Extended Events session created successfully!');
+        } catch (error: any) {
+            const errorMsg = error?.message || String(error);
+            
+            // If we get "Invalid object name 'sys.server_event_sessions'", it means Azure detection failed
+            if (!isAzure && errorMsg.includes('Invalid object name') && errorMsg.includes('sys.server_event_sessions')) {
+                // Silently detect and switch to Azure SQL Database
+                console.log('📊 Detected Azure SQL Database - switching to database-scoped Extended Events');
+                vscode.window.showInformationMessage('🔄 SQL Profiler: Connecting to Azure SQL Database... using database-scoped events');
+                
+                // Force cache update to Azure
+                this.detectedDatabaseType = 'azure';
+                if (this.currentPoolKey) {
+                    this.databaseTypeCache.set(this.currentPoolKey, {
+                        isAzure: true,
+                        timestamp: Date.now()
+                    });
+                }
+                
+                // Retry with Azure SQL Database syntax
+                console.log('Retrying createXESession() with Azure SQL Database syntax...');
+                return this.createXESession();
+            }
+            
+            Logger.error('Failed to create XE session', error);
+            throw error;
+        }
     }
 
     private async startXESession(): Promise<void> {
@@ -1143,6 +1312,16 @@ export class SqlProfilerManager {
     }
 
     private async collectResults(): Promise<void> {
+        // Leer modo de profiler desde configuración
+        const config = vscode.workspace.getConfiguration('sqlProfiler');
+        const profilerMode = config.get<string>('profilerMode', 'default');
+
+        // Si el modo es 'ads', usar la consulta y mapeo de Azure Data Studio
+        if (profilerMode === 'ads') {
+            await this.collectResultsADS();
+            return;
+        }
+
         // Semaphore check - prevent concurrent executions
         if (this.isCollectingResults) {
             console.log('⏭️ Skipping collectResults - already in progress');
@@ -1166,12 +1345,17 @@ export class SqlProfilerManager {
                 return;
             }
 
-            // Run basic test first time to help with debugging
-            if (this.results.length === 0 && this.isProfilering) {
-                await this.testBasicEventCapture(currentPool);
+            // Run basic diagnostics in background (non-blocking) on first collection
+            // This prevents 30+ second delays in initial event capture
+            if (this.results.length === 0 && this.isProfilering && !this.hasRunInitialDiagnostics) {
+                // Run diagnostics in background without awaiting
+                // This ensures we don't delay event collection
+                this.testBasicEventCapture(currentPool).catch(err => {
+                    Logger.errorSilent('Background diagnostics failed (non-critical):', err);
+                });
             }
 
-            // Re-check state after async operation
+            // Re-check state after setup checks
             if (!this.isProfilering || !this.pool) {
                 return;
             }
@@ -1397,17 +1581,50 @@ export class SqlProfilerManager {
                 return event;
             });
 
-            // Add only new events (deduplication based on unique event ID)
+            // Add only new events (deduplication using multi-layer strategy)
             const existingIds = new Set(this.results.map(e => e.id));
-            const filteredNewEvents = newEvents.filter(e =>
+            let filteredNewEvents = newEvents.filter(e =>
                 !existingIds.has(e.id)
             );
 
-            console.log('=== EVENT DEDUPLICATION ===');
+            // 🎯 LAYER 2: Apply advanced deduplication using EventDeduplicator
+            const deduplicatedEvents: ProfilerEvent[] = [];
+            let duplicatesBySignature = 0;
+
+            for (const event of filteredNewEvents) {
+                // Check if it's an internal query that should be filtered
+                if (isInternalQuery(event.statement)) {
+                    console.log('🔍 Internal query filtered:', {
+                        eventName: event.eventName,
+                        statement: event.statement.substring(0, 100)
+                    });
+                    continue; // Skip internal queries
+                }
+
+                // Check if already seen recently (time-windowed deduplication cache)
+                if (this.deduplicator.isDuplicate(event)) {
+                    duplicatesBySignature++;
+                    console.log('🔄 DUPLICATE DETECTED (signature match):', {
+                        eventName: event.eventName,
+                        statement: event.statement.substring(0, 100),
+                        timestamp: event.timestamp
+                    });
+                    continue; // Skip duplicate
+                }
+
+                deduplicatedEvents.push(event);
+            }
+
+            filteredNewEvents = deduplicatedEvents;
+
+            console.log('=== EVENT DEDUPLICATION SUMMARY ===');
             console.log('Total events from query:', newEvents.length);
-            console.log('Already in results:', newEvents.length - filteredNewEvents.length);
-            console.log('New events to add:', filteredNewEvents.length);
+            console.log('Already in results:', newEvents.length - filteredNewEvents.length - duplicatesBySignature);
+            console.log('Internal queries filtered:', newEvents.length - filteredNewEvents.length - duplicatesBySignature);
+            console.log('Duplicate by signature:', duplicatesBySignature);
+            console.log('New events after dedup:', filteredNewEvents.length);
             console.log('Current results array size:', this.results.length);
+            console.log('Deduplicator stats:', this.deduplicator.getStats());
 
             this.results.unshift(...filteredNewEvents);
 
@@ -1419,13 +1636,13 @@ export class SqlProfilerManager {
                 const newestEvent = filteredNewEvents[0];
                 const eventTime = new Date(newestEvent.timestamp).getTime();
                 const latencyMs = now - eventTime;
-                
+
                 // ⏱️ Log time from profiler start to first events (only for first batch)
                 if (this.lastEventReceivedTime === 0 && this.profilerStartTime > 0) {
                     const timeFromStart = now - this.profilerStartTime;
-                    console.log(`⏱️ FIRST EVENTS RECEIVED | Time from profiler start: ${timeFromStart}ms (${(timeFromStart/1000).toFixed(2)}s)`);
+                    console.log(`⏱️ FIRST EVENTS RECEIVED | Time from profiler start: ${timeFromStart}ms (${(timeFromStart / 1000).toFixed(2)}s)`);
                 }
-                
+
                 console.log(`✅ ${filteredNewEvents.length} new event(s) | Latency: ${latencyMs}ms | App: ${newestEvent.applicationName}`);
                 this.lastEventReceivedTime = now;
             }
@@ -1467,6 +1684,14 @@ export class SqlProfilerManager {
 
                 Logger.warn('Connection issue detected in collectResults, will be handled by polling error counter');
 
+                // Telemetry: connection error during event collection
+                const telemetry = TelemetryService.getInstance();
+                telemetry?.sendEvent('profilingConnectionError', {
+                    errorCode: error.code || 'unknown',
+                    errorType: error.code === 'ETIMEDOUT' ? 'timeout' : 'connection',
+                    serverType: this.detectedDatabaseType || 'unknown'
+                });
+
                 // Clear cache to force fresh detection next time
                 this.databaseTypeCache.clear();
 
@@ -1478,6 +1703,153 @@ export class SqlProfilerManager {
             Logger.warn('Non-critical error in collectResults, continuing polling');
         } finally {
             // Always reset semaphore
+            this.isCollectingResults = false;
+        }
+    }
+
+    /**
+     * Lógica de captura y mapeo de eventos compatible con Azure Data Studio Profiler
+     */
+    private async collectResultsADS(): Promise<void> {
+        // Semaphore check
+        if (this.isCollectingResults) {
+            console.log('⏭️ Skipping collectResultsADS - already in progress');
+            return;
+        }
+
+        if (!this.pool || !this.isProfilering) {
+            return;
+        }
+
+        this.isCollectingResults = true;
+        const currentPool = this.pool;
+
+        try {
+            const isAzure = await this.isAzureSqlDatabase(currentPool);
+            let query: string;
+
+            if (isAzure) {
+                query = `
+                    SELECT TOP 50
+                        event_xml.value('(@timestamp)[1]', 'datetime2') AS timestamp,
+                        event_xml.value('(@name)[1]', 'nvarchar(128)') AS eventName,
+                        event_xml.value('(data[@name="database_name"]/value)[1]', 'nvarchar(128)') AS databaseName,
+                        event_xml.value('(action[@name="username"]/value)[1]', 'nvarchar(128)') AS userName,
+                        event_xml.value('(action[@name="client_app_name"]/value)[1]', 'nvarchar(128)') AS applicationName,
+                        event_xml.value('(data[@name="statement"]/value)[1]', 'nvarchar(max)') AS statement,
+                        event_xml.value('(data[@name="duration"]/value)[1]', 'bigint') AS duration
+                    FROM (
+                        SELECT CAST(target_data AS XML) AS target_xml
+                        FROM sys.dm_xe_database_session_targets AS t
+                        JOIN sys.dm_xe_database_sessions AS s ON s.address = t.event_session_address
+                        WHERE s.name = '${this.sessionName}'
+                          AND t.target_name = 'ring_buffer'
+                    ) AS src
+                    CROSS APPLY target_xml.nodes('RingBufferTarget/event') AS events(event_xml)
+                    WHERE event_xml.value('(@name)[1]', 'nvarchar(128)') IN ('rpc_completed', 'sql_batch_completed', 'sql_statement_completed')
+                      ${this.getAntiRecursionFiltersADS()}
+                    ORDER BY timestamp DESC;
+                `;
+            } else {
+                // Para SQL Server con archivos .xel, usamos una subconsulta para aplicar filtros correctamente
+                query = `
+                    SELECT TOP 50 *
+                    FROM (
+                        SELECT 
+                            CAST(event_data AS XML).value('(event/@timestamp)[1]', 'datetime2') AS timestamp,
+                            CAST(event_data AS XML).value('(event/@name)[1]', 'nvarchar(128)') AS eventName,
+                            CAST(event_data AS XML).value('(event/data[@name="database_name"]/value)[1]', 'nvarchar(128)') AS databaseName,
+                            CAST(event_data AS XML).value('(event/action[@name="username"]/value)[1]', 'nvarchar(128)') AS userName,
+                            CAST(event_data AS XML).value('(event/action[@name="client_app_name"]/value)[1]', 'nvarchar(128)') AS applicationName,
+                            CAST(event_data AS XML).value('(event/data[@name="statement"]/value)[1]', 'nvarchar(max)') AS statement,
+                            CAST(event_data AS XML).value('(event/data[@name="duration"]/value)[1]', 'bigint') AS duration,
+                            CAST(event_data AS XML) AS event_xml
+                        FROM sys.fn_xe_file_target_read_file('${this.xelFilePath}*.xel', null, null, null)
+                        WHERE CAST(event_data AS XML).value('(event/@name)[1]', 'nvarchar(128)') IN ('rpc_completed', 'sql_batch_completed', 'sql_statement_completed')
+                    ) AS events
+                    WHERE 1=1
+                      ${this.getAntiRecursionFiltersADS()}
+                    ORDER BY timestamp DESC;
+                `;
+            }
+
+            console.log('=== EXECUTING ADS MODE QUERY ===');
+            console.log('Session name:', this.sessionName);
+            console.log('Is Azure:', isAzure);
+
+            const request = currentPool.request();
+            const result = await request.query(query);
+
+            console.log(`ADS mode: Query returned ${result.recordset.length} records`);
+
+            const newEvents: ProfilerEvent[] = result.recordset.map((record: any) => {
+                return {
+                    id: this.generateEventId(record),
+                    timestamp: record.timestamp ? new Date(record.timestamp).toISOString() : new Date().toISOString(),
+                    eventName: record.eventName || 'Unknown',
+                    statement: record.statement || '',
+                    duration: record.duration ? Number(record.duration) : undefined,
+                    databaseName: record.databaseName || 'Unknown',
+                    userName: record.userName || 'Unknown',
+                    applicationName: record.applicationName || 'Unknown'
+                };
+            });
+
+            // Deduplicar usando multi-layer strategy
+            const existingIds = new Set(this.results.map(e => e.id));
+            let filteredNewEvents = newEvents.filter(e => !existingIds.has(e.id));
+
+            // 🎯 LAYER 2: Apply advanced deduplication using EventDeduplicator
+            const deduplicatedEvents: ProfilerEvent[] = [];
+            let duplicatesBySignature = 0;
+
+            for (const event of filteredNewEvents) {
+                // Check if it's an internal query that should be filtered
+                if (isInternalQuery(event.statement)) {
+                    console.log('🔍 ADS: Internal query filtered:', {
+                        eventName: event.eventName,
+                        statement: event.statement.substring(0, 100)
+                    });
+                    continue;
+                }
+
+                // Check if already seen recently (time-windowed deduplication cache)
+                if (this.deduplicator.isDuplicate(event)) {
+                    duplicatesBySignature++;
+                    console.log('🔄 ADS: DUPLICATE DETECTED (signature match):', {
+                        eventName: event.eventName,
+                        statement: event.statement.substring(0, 100),
+                        timestamp: event.timestamp
+                    });
+                    continue;
+                }
+
+                deduplicatedEvents.push(event);
+            }
+
+            filteredNewEvents = deduplicatedEvents;
+
+            console.log('=== ADS MODE EVENT DEDUPLICATION ===');
+            console.log('Total events from query:', newEvents.length);
+            console.log('Already in results:', newEvents.length - filteredNewEvents.length - duplicatesBySignature);
+            console.log('Duplicate by signature:', duplicatesBySignature);
+            console.log('New events to add:', filteredNewEvents.length);
+
+            this.results.unshift(...filteredNewEvents);
+
+            // Limitar resultados
+            const maxEvents = vscode.workspace.getConfiguration('sqlProfiler').get<number>('maxEvents') || 2000;
+            if (this.results.length > maxEvents) {
+                this.results = this.results.slice(0, maxEvents);
+            }
+
+            if (filteredNewEvents.length > 0) {
+                console.log(`✅ ADS mode: ${filteredNewEvents.length} new event(s) added`);
+            }
+        } catch (error: any) {
+            Logger.errorSilent('Error in collectResultsADS:', error);
+            console.error('ADS mode query failed:', error.message);
+        } finally {
             this.isCollectingResults = false;
         }
     }
@@ -1629,6 +2001,30 @@ export class SqlProfilerManager {
             hash = hash & hash; // Convert to 32bit integer
         }
         return Math.abs(hash).toString(16).substring(0, 8);
+    }
+
+    /**
+     * 🛡️ Generates SQL filter conditions for ADS mode (simplified XML paths)
+     * Adapted for event_xml structure used in collectResultsADS
+     * Only filters the profiler's OWN queries, not queries from other applications
+     */
+    private getAntiRecursionFiltersADS(): string {
+        // Solo filtrar queries que vienen específicamente de nuestra extensión
+        const filters = `
+            -- Solo excluir queries de la extensión SQL Profiler Tool
+            AND NOT (
+                COALESCE(event_xml.value('(action[@name="client_app_name"]/value)[1]', 'nvarchar(128)'), '') = 'SQL Profiler Tool for VS Code'
+                AND (
+                    COALESCE(event_xml.value('(data[@name="statement"]/value)[1]', 'nvarchar(max)'), '') LIKE '%sys.dm_xe_%'
+                    OR COALESCE(event_xml.value('(data[@name="statement"]/value)[1]', 'nvarchar(max)'), '') LIKE '%RingBufferTarget%'
+                    OR COALESCE(event_xml.value('(data[@name="statement"]/value)[1]', 'nvarchar(max)'), '') LIKE '%sys.fn_xe_file_target_read_file%'
+                    OR COALESCE(event_xml.value('(data[@name="statement"]/value)[1]', 'nvarchar(max)'), '') LIKE '%VSCodeProfilerSession%'
+                    OR COALESCE(event_xml.value('(data[@name="statement"]/value)[1]', 'nvarchar(max)'), '') LIKE '%sys.database_event_sessions%'
+                    OR COALESCE(event_xml.value('(data[@name="statement"]/value)[1]', 'nvarchar(max)'), '') LIKE '%sys.server_event_sessions%'
+                )
+            )`;
+
+        return filters;
     }
 
     /**
@@ -1819,7 +2215,29 @@ export class SqlProfilerManager {
      */
     getSelectedConnectionName(): string {
         const config = vscode.workspace.getConfiguration('sqlProfiler');
-        return config.get<string>('selectedConnection') || '';
+        const configuredConnection = config.get<string>('selectedConnection') || '';
+        const connections = this.getMssqlConnections();
+
+        if (configuredConnection && connections.some(conn => conn.profileName === configuredConnection)) {
+            return configuredConnection;
+        }
+
+        if (connections.length === 1) {
+            const fallbackConnection = connections[0].profileName;
+            Logger.info('Using the only configured mssql connection as selected profile', {
+                profile: fallbackConnection
+            });
+            return fallbackConnection;
+        }
+
+        if (configuredConnection) {
+            Logger.warn('Configured selected connection was not found in mssql.connections', {
+                profile: configuredConnection,
+                availableProfiles: connections.map(conn => conn.profileName)
+            });
+        }
+
+        return configuredConnection;
     }
 
     /**
@@ -2522,6 +2940,16 @@ Current connection works but Extended Events requires VIEW SERVER STATE permissi
 
         console.log(`Found connection: ${connection.server}, auth: ${connection.authenticationType}`);
 
+        // 🔄 FORCE CLOSE existing pool to ensure new appName is applied
+        // This ensures the pool is recreated with 'SQL Profiler Tool for VS Code' appName
+        const existingPoolKeys = this.poolManager.getActivePoolKeys();
+        for (const key of existingPoolKeys) {
+            if (key.includes(selectedProfile.replace(/[^a-zA-Z0-9_]/g, '_'))) {
+                Logger.info(`Closing existing pool to force recreation with new appName: ${key}`);
+                await this.poolManager.closePool(key);
+            }
+        }
+
         // Auto-correct Azure SQL server format if needed
         const serverCorrection = this.correctAzureSqlServerFormat(connection.server);
         if (serverCorrection.wasChanged) {
@@ -3051,10 +3479,33 @@ ${this.formatRecommendedActions(results)}
         }
     }
 
+    /**
+     * Dispose all resources and cleanup timers and caches
+     */
     dispose(): void {
+        // Stop profiling if running
         if (this.isProfilering) {
             this.stopProfiling();
         }
+        
+        // Clear polling interval
+        if (this.pollingInterval) {
+            clearInterval(this.pollingInterval);
+            this.pollingInterval = undefined;
+        }
+        
+        // Clear caches to free memory
+        this.databaseTypeCache.clear();
+        this.lastLogTime.clear();
+        
+        // Reset state
+        this.results = [];
+        this.lastReadTimestamp = null;
+        this.lastAzureTimestamp = null;
+        this.detectedDatabaseType = null;
+        
+        Logger.info('SqlProfilerManager disposed successfully - all resources cleaned up');
+        
         // Note: We don't close pools here as they might be used by other instances
         // Pools will be cleaned up when the extension is deactivated
     }
