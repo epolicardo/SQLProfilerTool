@@ -2,7 +2,8 @@
   "name": "sql-server-profiler-tool",
   "displayName": "SQL Server Profiler Tool",
   "description": "SQL Server profiler extension using Extended Events for real-time query capture and analysis with advanced connection pooling, auto-reconnection system, and persistent UI state",
-  "version": "0.4.1",
+  "icon": "resources/Designer.png",
+  "version": "0.5.0",
   "publisher": "epolicardo",
   "engines": {
     "vscode": "^1.106.0"
@@ -24,7 +25,7 @@
     "reliability"
   ],
   "activationEvents": [],
-  "main": "./out/extension.js",
+  "main": "./dist/extension.js",
   "contributes": {
     "configuration": {
       "title": "SQL Server Profiler Tool",
@@ -293,6 +294,33 @@
         "icon": "$(pulse)"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "sqlProfiler",
+          "title": "SQL Profiler",
+          "icon": "resources/Designer.png"
+        }
+      ]
+    },
+    "views": {
+      "sqlProfiler": [
+        {
+          "id": "sqlProfiler.sidebar",
+          "name": "Profiler"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "sqlProfiler.sidebar",
+        "contents": "[Open SQL Server Profiler](command:sqlProfiler.openProfiler)"
+      },
+      {
+        "view": "sqlProfiler.sidebar",
+        "contents": "[Start Profiling](command:sqlProfiler.startProfiling)"
+      }
+    ],
     "menus": {
       "commandPalette": [
         {
@@ -341,17 +369,19 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile && npm run lint",
+    "vscode:prepublish": "npm run package",
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js",
-    "package": "npx @vscode/vsce package",
+    "package-vsce": "npx @vscode/vsce package",
     "package-hotfix": "node scripts/increment-and-package.js",
     "publish": "npx @vscode/vsce publish",
-    "prepublish": "npm run compile && npm run lint",
-    "clean": "rimraf out",
+    "clean": "rimraf out dist",
     "rebuild": "npm run clean && npm run compile"
   },
   "repository": {
@@ -377,7 +407,11 @@
     "@vscode/vsce": "^3.2.0",
     "eslint": "^8.28.0",
     "glob": "^8.0.3",
-    "typescript": "^4.9.4"
+    "rimraf": "^3.0.2",
+    "ts-loader": "^9.5.4",
+    "typescript": "^4.9.4",
+    "webpack": "^5.105.2",
+    "webpack-cli": "^5.1.4"
   },
   "dependencies": {
     "@azure/monitor-opentelemetry": "^1.9.0",

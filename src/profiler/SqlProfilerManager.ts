@@ -5,6 +5,7 @@ import { ConnectionPoolManager, PoolConfig, PoolStats } from '../database/Connec
 import { AutoReconnectManager, ConnectionErrorType } from '../database/AutoReconnectManager';
 import { TelemetryService } from '../utils/TelemetryService';
 import { OpenTelemetryService } from '../utils/OpenTelemetryService';
+import { EventDeduplicator, isInternalQuery } from '../utils/deduplicationUtils';
 
 export interface MssqlConnection {
     profileName: string;
@@ -48,7 +49,7 @@ export class SqlProfilerManager {
     private isProfilering = false;
     private sessionName = 'VSCodeProfilerSession';
     private results: ProfilerEvent[] = [];
-    private pollingInterval: any | undefined;
+    private pollingInterval: NodeJS.Timeout | undefined;
     private pollingIntervalMs = 500; // Default polling interval, adjusted based on platform
     private context: vscode.ExtensionContext | undefined;
     private hasRunInitialDiagnostics = false; // Flag to run diagnostics only once
@@ -71,12 +72,20 @@ export class SqlProfilerManager {
     private lastLogTime: Map<string, number> = new Map();
     private readonly logThrottleMs = 10000; // Only log same message once per 10 seconds
 
+    // Event deduplication to prevent showing the same event twice
+    private deduplicator: EventDeduplicator;
+
     constructor(context?: vscode.ExtensionContext) {
         const config = vscode.workspace.getConfiguration('sqlProfiler');
         this.sessionName = config.get<string>('sessionName') || 'VSCodeProfilerSession';
         this.context = context;
         this.poolManager = ConnectionPoolManager.getInstance();
         this.autoReconnectManager = AutoReconnectManager.getInstance();
+        this.deduplicator = new EventDeduplicator({
+            windowMs: 5000, // 5 second deduplication window
+            maxSignatures: 1000,
+            filterInternalQueries: true,
+        });
         this.setupReconnectEventHandlers();
     }
 
@@ -1336,12 +1345,17 @@ export class SqlProfilerManager {
                 return;
             }
 
-            // Run basic test first time to help with debugging
-            if (this.results.length === 0 && this.isProfilering) {
-                await this.testBasicEventCapture(currentPool);
+            // Run basic diagnostics in background (non-blocking) on first collection
+            // This prevents 30+ second delays in initial event capture
+            if (this.results.length === 0 && this.isProfilering && !this.hasRunInitialDiagnostics) {
+                // Run diagnostics in background without awaiting
+                // This ensures we don't delay event collection
+                this.testBasicEventCapture(currentPool).catch(err => {
+                    Logger.errorSilent('Background diagnostics failed (non-critical):', err);
+                });
             }
 
-            // Re-check state after async operation
+            // Re-check state after setup checks
             if (!this.isProfilering || !this.pool) {
                 return;
             }
@@ -1567,17 +1581,50 @@ export class SqlProfilerManager {
                 return event;
             });
 
-            // Add only new events (deduplication based on unique event ID)
+            // Add only new events (deduplication using multi-layer strategy)
             const existingIds = new Set(this.results.map(e => e.id));
-            const filteredNewEvents = newEvents.filter(e =>
+            let filteredNewEvents = newEvents.filter(e =>
                 !existingIds.has(e.id)
             );
 
-            console.log('=== EVENT DEDUPLICATION ===');
+            // 🎯 LAYER 2: Apply advanced deduplication using EventDeduplicator
+            const deduplicatedEvents: ProfilerEvent[] = [];
+            let duplicatesBySignature = 0;
+
+            for (const event of filteredNewEvents) {
+                // Check if it's an internal query that should be filtered
+                if (isInternalQuery(event.statement)) {
+                    console.log('🔍 Internal query filtered:', {
+                        eventName: event.eventName,
+                        statement: event.statement.substring(0, 100)
+                    });
+                    continue; // Skip internal queries
+                }
+
+                // Check if already seen recently (time-windowed deduplication cache)
+                if (this.deduplicator.isDuplicate(event)) {
+                    duplicatesBySignature++;
+                    console.log('🔄 DUPLICATE DETECTED (signature match):', {
+                        eventName: event.eventName,
+                        statement: event.statement.substring(0, 100),
+                        timestamp: event.timestamp
+                    });
+                    continue; // Skip duplicate
+                }
+
+                deduplicatedEvents.push(event);
+            }
+
+            filteredNewEvents = deduplicatedEvents;
+
+            console.log('=== EVENT DEDUPLICATION SUMMARY ===');
             console.log('Total events from query:', newEvents.length);
-            console.log('Already in results:', newEvents.length - filteredNewEvents.length);
-            console.log('New events to add:', filteredNewEvents.length);
+            console.log('Already in results:', newEvents.length - filteredNewEvents.length - duplicatesBySignature);
+            console.log('Internal queries filtered:', newEvents.length - filteredNewEvents.length - duplicatesBySignature);
+            console.log('Duplicate by signature:', duplicatesBySignature);
+            console.log('New events after dedup:', filteredNewEvents.length);
             console.log('Current results array size:', this.results.length);
+            console.log('Deduplicator stats:', this.deduplicator.getStats());
 
             this.results.unshift(...filteredNewEvents);
 
@@ -1748,12 +1795,44 @@ export class SqlProfilerManager {
                 };
             });
 
-            // Deduplicar y agregar eventos nuevos
+            // Deduplicar usando multi-layer strategy
             const existingIds = new Set(this.results.map(e => e.id));
-            const filteredNewEvents = newEvents.filter(e => !existingIds.has(e.id));
+            let filteredNewEvents = newEvents.filter(e => !existingIds.has(e.id));
+
+            // 🎯 LAYER 2: Apply advanced deduplication using EventDeduplicator
+            const deduplicatedEvents: ProfilerEvent[] = [];
+            let duplicatesBySignature = 0;
+
+            for (const event of filteredNewEvents) {
+                // Check if it's an internal query that should be filtered
+                if (isInternalQuery(event.statement)) {
+                    console.log('🔍 ADS: Internal query filtered:', {
+                        eventName: event.eventName,
+                        statement: event.statement.substring(0, 100)
+                    });
+                    continue;
+                }
+
+                // Check if already seen recently (time-windowed deduplication cache)
+                if (this.deduplicator.isDuplicate(event)) {
+                    duplicatesBySignature++;
+                    console.log('🔄 ADS: DUPLICATE DETECTED (signature match):', {
+                        eventName: event.eventName,
+                        statement: event.statement.substring(0, 100),
+                        timestamp: event.timestamp
+                    });
+                    continue;
+                }
+
+                deduplicatedEvents.push(event);
+            }
+
+            filteredNewEvents = deduplicatedEvents;
 
             console.log('=== ADS MODE EVENT DEDUPLICATION ===');
             console.log('Total events from query:', newEvents.length);
+            console.log('Already in results:', newEvents.length - filteredNewEvents.length - duplicatesBySignature);
+            console.log('Duplicate by signature:', duplicatesBySignature);
             console.log('New events to add:', filteredNewEvents.length);
 
             this.results.unshift(...filteredNewEvents);
@@ -2136,7 +2215,29 @@ export class SqlProfilerManager {
      */
     getSelectedConnectionName(): string {
         const config = vscode.workspace.getConfiguration('sqlProfiler');
-        return config.get<string>('selectedConnection') || '';
+        const configuredConnection = config.get<string>('selectedConnection') || '';
+        const connections = this.getMssqlConnections();
+
+        if (configuredConnection && connections.some(conn => conn.profileName === configuredConnection)) {
+            return configuredConnection;
+        }
+
+        if (connections.length === 1) {
+            const fallbackConnection = connections[0].profileName;
+            Logger.info('Using the only configured mssql connection as selected profile', {
+                profile: fallbackConnection
+            });
+            return fallbackConnection;
+        }
+
+        if (configuredConnection) {
+            Logger.warn('Configured selected connection was not found in mssql.connections', {
+                profile: configuredConnection,
+                availableProfiles: connections.map(conn => conn.profileName)
+            });
+        }
+
+        return configuredConnection;
     }
 
     /**
@@ -3378,10 +3479,33 @@ ${this.formatRecommendedActions(results)}
         }
     }
 
+    /**
+     * Dispose all resources and cleanup timers and caches
+     */
     dispose(): void {
+        // Stop profiling if running
         if (this.isProfilering) {
             this.stopProfiling();
         }
+        
+        // Clear polling interval
+        if (this.pollingInterval) {
+            clearInterval(this.pollingInterval);
+            this.pollingInterval = undefined;
+        }
+        
+        // Clear caches to free memory
+        this.databaseTypeCache.clear();
+        this.lastLogTime.clear();
+        
+        // Reset state
+        this.results = [];
+        this.lastReadTimestamp = null;
+        this.lastAzureTimestamp = null;
+        this.detectedDatabaseType = null;
+        
+        Logger.info('SqlProfilerManager disposed successfully - all resources cleaned up');
+        
         // Note: We don't close pools here as they might be used by other instances
         // Pools will be cleaned up when the extension is deactivated
     }

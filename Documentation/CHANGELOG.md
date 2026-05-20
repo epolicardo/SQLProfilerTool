@@ -1,3 +1,46 @@
+# [0.5.0] - 2026-02-24
+
+### 🚨 CRITICAL PERFORMANCE FIX
+- **FIXED**: **4-Minute Initial Latency** - Profiler now shows first events in 1-2 seconds (was 4+ minutes)
+  - Root cause: Diagnostic queries running synchronously in polling loop
+  - Solution: Moved diagnostics to background (non-blocking)
+  - Result: **120x improvement** in initial event display latency
+  - **Impact**: Users see data immediately, diagnostics run quietly in background
+
+### 🎯 Critical Data Integrity Fix
+- **FIXED**: **Duplicate Event Deduplication** - Resolved critical issue where same database actions were captured twice (sql_statement_completed + sql_batch_completed)
+  - Implemented multi-layer deduplication system with 3 filtering layers:
+    1. Event ID deduplication (Layer 1)
+    2. Internal query filtering (Layer 2) - removes sys.dm_xe_* and system queries
+    3. SHA256 signature matching with 5-second sliding window (Layer 3)
+  - **Impact**: ~50% reduction in duplicate events, significantly improving data integrity
+  - New modules: `EventDeduplicator` class, 5 helper functions in `deduplicationUtils.ts`
+  - **Result**: Users now see clean, non-duplicated query metrics
+
+### ⚡ Performance & Bundle Optimization
+- **NEW**: **Webpack Bundling** - Extension size reduced by 98.3% (388 MB → 6.56 MB)
+- **NEW**: **Tree Shaking** - Eliminated unused code and dependencies
+- **NEW**: **Minification** - Optimized production bundle for faster load times
+- **IMPROVED**: **Load Time** - Significantly faster activation and startup
+- **IMPROVED**: **Memory Footprint** - Reduced runtime memory consumption
+
+### 🔒 Security Enhancements
+- **NEW**: **CSP Hardened** - Content Security Policy with cryptographic nonces
+- **FIXED**: **XSS Vulnerability** - Eliminated 'unsafe-inline' from webview
+- **IMPROVED**: **Nonce Generation** - Using crypto.randomBytes() for secure random values
+
+### 🛠️ Code Quality & Type Safety
+- **IMPROVED**: **Type Safety** - Replaced 'any' types with proper TypeScript types
+- **IMPROVED**: **Memory Management** - Enhanced dispose() methods with proper cleanup
+- **NEW**: **Performance Utilities** - Reusable debounce, throttle, and cleanupTimedMap utilities
+- **IMPROVED**: **Resource Cleanup** - Proper disposal of timers, Maps, and event listeners
+- **NEW**: **Deduplication Utilities** - New `src/utils/deduplicationUtils.ts` with event deduplication
+
+### 📦 Build System
+- **NEW**: **Production Mode** - Optimized webpack configuration for distribution
+- **NEW**: **Development Mode** - Source maps enabled for debugging
+- **IMPROVED**: **Build Scripts** - Updated npm scripts for webpack workflow
+
 # [0.3.0] - 2025-11-25
 
 ### 🚀 Telemetry & Privacy

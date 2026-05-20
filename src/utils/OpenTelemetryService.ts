@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as os from 'os';
-import { useAzureMonitor } from '@azure/monitor-opentelemetry';
+import { useAzureMonitor, AzureMonitorOpenTelemetryOptions } from '@azure/monitor-opentelemetry';
 import { 
     trace, 
     Span, 
@@ -27,6 +27,7 @@ export class OpenTelemetryService {
     private isEnabled: boolean = false;
     private extensionContext: vscode.ExtensionContext;
     private appInsightsConnectionString: string | undefined;
+    private azureMonitorOptions: AzureMonitorOpenTelemetryOptions | undefined;
 
     // Metrics
     private eventsCapturedCounter!: Counter;
@@ -72,32 +73,55 @@ export class OpenTelemetryService {
         const serviceVersion = context.extension.packageJSON.version;
 
         try {
-            // Initialize Azure Monitor OpenTelemetry
+            // Initialize Azure Monitor OpenTelemetry with proper configuration
             if (this.appInsightsConnectionString) {
-                useAzureMonitor({
+                Logger.info('Initializing Azure Monitor OpenTelemetry with connection string');
+                
+                // Configure Azure Monitor options
+                this.azureMonitorOptions = {
                     azureMonitorExporterOptions: {
                         connectionString: this.appInsightsConnectionString,
                     },
                     enableLiveMetrics: true,
-                });
+                    samplingRatio: 1.0, // Send 100% of traces
+                    browserSdkLoaderOptions: {
+                        enabled: false, // Disable browser SDK as this is an extension
+                    },
+                    instrumentationOptions: {
+                        azureSdk: {
+                            enabled: true,
+                        },
+                        http: {
+                            enabled: true,
+                        },
+                    },
+                };
 
-                Logger.info('Azure Monitor OpenTelemetry initialized successfully');
+                // Initialize Azure Monitor
+                useAzureMonitor(this.azureMonitorOptions);
+                Logger.info('useAzureMonitor() executed successfully');
+
             } else {
-                Logger.warn('No Application Insights connection string provided, telemetry will be disabled');
+                Logger.warn('No Application Insights connection string provided, telemetry will be limited');
                 this.isEnabled = false;
             }
 
-            // Get tracer and meter
+            // Get tracer and meter AFTER useAzureMonitor initialization
             this.tracer = trace.getTracer(serviceName, serviceVersion);
             this.meter = metrics.getMeter(serviceName, serviceVersion);
 
+            Logger.info(`Tracer obtained: ${serviceName}/${serviceVersion}`);
+            Logger.info(`Meter obtained: ${serviceName}/${serviceVersion}`);
+
             // Create metrics
             this.initializeMetrics();
-
-            // No need for shutdown hook with useAzureMonitor - it handles cleanup automatically
+            Logger.info('Metrics initialized successfully');
 
         } catch (error) {
             Logger.error('Failed to initialize OpenTelemetry: ' + (error instanceof Error ? error.message : String(error)));
+            if (error instanceof Error) {
+                Logger.error('Stack: ' + error.stack);
+            }
             // Fallback to no-op implementations
             this.tracer = trace.getTracer('sql-profiler-noop');
             this.meter = metrics.getMeter('sql-profiler-noop');

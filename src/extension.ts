@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import * as os from 'os';
 import { SqlProfilerManager } from './profiler/SqlProfilerManager';
 import { ProfilerWebviewProvider } from './webview/ProfilerWebviewProvider';
+import { ProfilerViewProvider } from './views/ProfilerViewProvider';
 import { Logger } from './utils/Logger';
 import { TelemetryService } from './utils/TelemetryService';
 import { OpenTelemetryService } from './utils/OpenTelemetryService';
@@ -70,6 +71,12 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Initialize the profiler manager
     profilerManager = new SqlProfilerManager(context);
+
+    // Register sidebar view provider (Activity Bar container)
+    const profilerSidebarProvider = new ProfilerViewProvider();
+    context.subscriptions.push(
+        vscode.window.registerTreeDataProvider('sqlProfiler.sidebar', profilerSidebarProvider)
+    );
 
     // Create Status Bar button
     const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -283,11 +290,12 @@ function registerCommands(context: vscode.ExtensionContext) {
 
             try {
                 const config = vscode.workspace.getConfiguration('sqlProfiler');
+                const selectedConnection = config.get<string>('selectedConnection');
                 const connectionString = config.get<string>('connectionString');
 
-                if (!connectionString) {
+                if (!selectedConnection && !connectionString) {
                     const inputConnectionString = await vscode.window.showInputBox({
-                        prompt: 'Enter SQL Server connection string',
+                        prompt: 'Enter SQL Server connection string or configure sqlProfiler.selectedConnection',
                         placeHolder: 'Server=localhost;Database=master;Integrated Security=true;',
                         ignoreFocusOut: true
                     });
