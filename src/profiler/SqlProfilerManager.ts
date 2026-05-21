@@ -6,6 +6,8 @@ import { AutoReconnectManager, ConnectionErrorType } from '../database/AutoRecon
 import { TelemetryService } from '../utils/TelemetryService';
 import { OpenTelemetryService } from '../utils/OpenTelemetryService';
 import { EventDeduplicator, isInternalQuery } from '../utils/deduplicationUtils';
+import { EventStorageService } from '../utils/EventStorageService';
+import { StoredEvent } from '../utils/EventRegistry';
 
 export interface MssqlConnection {
     profileName: string;
@@ -48,7 +50,7 @@ export class SqlProfilerManager {
     private currentConnection: MssqlConnection | undefined;
     private isProfilering = false;
     private sessionName = 'VSCodeProfilerSession';
-    private results: ProfilerEvent[] = [];
+    private eventStorage: EventStorageService | undefined;
     private pollingInterval: NodeJS.Timeout | undefined;
     private pollingIntervalMs = 500; // Default polling interval, adjusted based on platform
     private context: vscode.ExtensionContext | undefined;
@@ -85,6 +87,13 @@ export class SqlProfilerManager {
             windowMs: 5000, // 5 second deduplication window
             maxSignatures: 1000,
             filterInternalQueries: true,
+        });
+        // Initialize EventStorageService with unique session ID
+        const sessionId = `profiler_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        this.eventStorage = new EventStorageService({
+            sessionId,
+            maxEvents: config.get<number>('maxEvents') || 2000,
+            autoPersistIntervalMs: 10000
         });
         this.setupReconnectEventHandlers();
     }
@@ -260,7 +269,8 @@ export class SqlProfilerManager {
             // Debug: Log initial state
             console.log('=== PROFILING START DEBUG ===');
             console.log('Session name:', this.sessionName);
-            console.log('Results array length:', this.results.length);
+            console.log('Event registry initialized');
+            console.log('Events in storage:', this.eventStorage?.getAllEvents().length || 0);
             console.log('isProfilering:', this.isProfilering);
             console.log('Pool status:', this.pool ? 'Connected' : 'Not connected');
 
@@ -294,7 +304,7 @@ export class SqlProfilerManager {
         try {
             // Calculate session metrics before cleanup
             const sessionDuration = this.profilerStartTime ? Date.now() - this.profilerStartTime : 0;
-            const totalEvents = this.results.length;
+            const totalEvents = this.eventStorage?.getAllEvents().length || 0;
 
             // OpenTelemetry metrics
             otelService?.recordQueryDuration(sessionDuration, {
@@ -323,6 +333,10 @@ export class SqlProfilerManager {
             this.lastReadTimestamp = null; // Reset streaming timestamp
             this.eventIdCounter = 0; // Reset ID counter for fresh session
             this.profilerStartTime = 0; // Reset start time
+
+            // Persist event storage to disk before cleanup
+            this.eventStorage?.persistToDisk();
+            Logger.info(`Event registry persisted to disk with ${totalEvents} events`);
 
             // Stop polling interval first
             if (this.pollingInterval) {
@@ -354,6 +368,10 @@ export class SqlProfilerManager {
                 this.pool = undefined;
                 this.currentPoolKey = undefined;
                 Logger.info('Pool references cleared');
+
+                // Dispose of event storage
+                this.eventStorage?.dispose();
+                Logger.info('Event storage disposed');
             }
 
             // Clear database type cache to avoid stale data on reconnection
@@ -1347,7 +1365,8 @@ export class SqlProfilerManager {
 
             // Run basic diagnostics in background (non-blocking) on first collection
             // This prevents 30+ second delays in initial event capture
-            if (this.results.length === 0 && this.isProfilering && !this.hasRunInitialDiagnostics) {
+            const eventCount = this.eventStorage?.getAllEvents().length || 0;
+            if (eventCount === 0 && this.isProfilering && !this.hasRunInitialDiagnostics) {
                 // Run diagnostics in background without awaiting
                 // This ensures we don't delay event collection
                 this.testBasicEventCapture(currentPool).catch(err => {
@@ -1581,19 +1600,15 @@ export class SqlProfilerManager {
                 return event;
             });
 
-            // Add only new events (deduplication using multi-layer strategy)
-            const existingIds = new Set(this.results.map(e => e.id));
-            let filteredNewEvents = newEvents.filter(e =>
-                !existingIds.has(e.id)
-            );
-
-            // 🎯 LAYER 2: Apply advanced deduplication using EventDeduplicator
-            const deduplicatedEvents: ProfilerEvent[] = [];
+            // Add events using EventStorageService (handles deduplication internally)
+            let newEventsCount = 0;
             let duplicatesBySignature = 0;
+            let internalQueriesFiltered = 0;
 
-            for (const event of filteredNewEvents) {
+            for (const event of newEvents) {
                 // Check if it's an internal query that should be filtered
                 if (isInternalQuery(event.statement)) {
+                    internalQueriesFiltered++;
                     console.log('🔍 Internal query filtered:', {
                         eventName: event.eventName,
                         statement: event.statement.substring(0, 100)
@@ -1601,50 +1616,54 @@ export class SqlProfilerManager {
                     continue; // Skip internal queries
                 }
 
-                // Check if already seen recently (time-windowed deduplication cache)
-                if (this.deduplicator.isDuplicate(event)) {
+                // Prepare event with xeTimestamp for EventStorageService dedup
+                const storedEvent: StoredEvent = {
+                    ...event,
+                    xeTimestamp: event.timestamp,
+                    xeId: event.id
+                };
+
+                // Add to storage - returns true if added, false if duplicate
+                const wasAdded = this.eventStorage?.addEvent(storedEvent);
+                if (wasAdded) {
+                    newEventsCount++;
+                } else {
                     duplicatesBySignature++;
-                    console.log('🔄 DUPLICATE DETECTED (signature match):', {
+                    console.log('🔄 DUPLICATE DETECTED (storage layer):', {
                         eventName: event.eventName,
                         statement: event.statement.substring(0, 100),
                         timestamp: event.timestamp
                     });
-                    continue; // Skip duplicate
                 }
-
-                deduplicatedEvents.push(event);
             }
-
-            filteredNewEvents = deduplicatedEvents;
 
             console.log('=== EVENT DEDUPLICATION SUMMARY ===');
             console.log('Total events from query:', newEvents.length);
-            console.log('Already in results:', newEvents.length - filteredNewEvents.length - duplicatesBySignature);
-            console.log('Internal queries filtered:', newEvents.length - filteredNewEvents.length - duplicatesBySignature);
-            console.log('Duplicate by signature:', duplicatesBySignature);
-            console.log('New events after dedup:', filteredNewEvents.length);
-            console.log('Current results array size:', this.results.length);
-            console.log('Deduplicator stats:', this.deduplicator.getStats());
-
-            this.results.unshift(...filteredNewEvents);
-
-            console.log('Results array size after adding:', this.results.length);
+            console.log('Internal queries filtered:', internalQueriesFiltered);
+            console.log('Duplicate by storage layer:', duplicatesBySignature);
+            console.log('New events added to storage:', newEventsCount);
+            const storageStats = this.eventStorage?.getStats();
+            console.log('Storage stats:', storageStats);
 
             // 📊 UX: Log latency for new events (time from SQL execution to UI delivery)
-            if (filteredNewEvents.length > 0) {
+            if (newEventsCount > 0) {
                 const now = Date.now();
-                const newestEvent = filteredNewEvents[0];
-                const eventTime = new Date(newestEvent.timestamp).getTime();
-                const latencyMs = now - eventTime;
+                const allEvents = this.eventStorage?.getAllEvents() || [];
+                const newestEvent = allEvents.length > 0 ? allEvents[0] : null;
+                
+                if (newestEvent) {
+                    const eventTime = new Date(newestEvent.timestamp).getTime();
+                    const latencyMs = now - eventTime;
 
-                // ⏱️ Log time from profiler start to first events (only for first batch)
-                if (this.lastEventReceivedTime === 0 && this.profilerStartTime > 0) {
-                    const timeFromStart = now - this.profilerStartTime;
-                    console.log(`⏱️ FIRST EVENTS RECEIVED | Time from profiler start: ${timeFromStart}ms (${(timeFromStart / 1000).toFixed(2)}s)`);
+                    // ⏱️ Log time from profiler start to first events (only for first batch)
+                    if (this.lastEventReceivedTime === 0 && this.profilerStartTime > 0) {
+                        const timeFromStart = now - this.profilerStartTime;
+                        console.log(`⏱️ FIRST EVENTS RECEIVED | Time from profiler start: ${timeFromStart}ms (${(timeFromStart / 1000).toFixed(2)}s)`);
+                    }
+
+                    console.log(`✅ ${newEventsCount} new event(s) | Latency: ${latencyMs}ms | App: ${newestEvent.applicationName}`);
+                    this.lastEventReceivedTime = now;
                 }
-
-                console.log(`✅ ${filteredNewEvents.length} new event(s) | Latency: ${latencyMs}ms | App: ${newestEvent.applicationName}`);
-                this.lastEventReceivedTime = now;
             }
 
             // 🎯 Update timestamp for next incremental read
@@ -1663,13 +1682,8 @@ export class SqlProfilerManager {
             }
 
             // Limit results to avoid memory issues
-            const config = vscode.workspace.getConfiguration('sqlProfiler');
-            const maxEvents = config.get<number>('maxEvents') || 2000; // Increased default from 1000
-            if (this.results.length > maxEvents) {
-                const discarded = this.results.length - maxEvents;
-                this.results = this.results.slice(0, maxEvents);
-                console.log(`⚠️ Discarded ${discarded} oldest event(s) to maintain ${maxEvents} event limit`);
-            }
+            // Event storage automatically manages max events limit
+            // No need to manually trim here anymore
 
         } catch (error: any) {
             // Use silent logging for collection errors to avoid notification spam
@@ -1782,69 +1796,44 @@ export class SqlProfilerManager {
 
             console.log(`ADS mode: Query returned ${result.recordset.length} records`);
 
-            const newEvents: ProfilerEvent[] = result.recordset.map((record: any) => {
-                return {
-                    id: this.generateEventId(record),
-                    timestamp: record.timestamp ? new Date(record.timestamp).toISOString() : new Date().toISOString(),
-                    eventName: record.eventName || 'Unknown',
-                    statement: record.statement || '',
-                    duration: record.duration ? Number(record.duration) : undefined,
-                    databaseName: record.databaseName || 'Unknown',
-                    userName: record.userName || 'Unknown',
-                    applicationName: record.applicationName || 'Unknown'
-                };
-            });
+            // Convert to StoredEvent format with deduplication metadata
+            const newEvents: StoredEvent[] = result.recordset.map((record: any) => ({
+                id: this.generateEventId(record),
+                timestamp: record.timestamp ? new Date(record.timestamp).toISOString() : new Date().toISOString(),
+                eventName: record.eventName || 'Unknown',
+                statement: record.statement || '',
+                duration: record.duration ? Number(record.duration) : undefined,
+                databaseName: record.databaseName || 'Unknown',
+                userName: record.userName || 'Unknown',
+                applicationName: record.applicationName || 'Unknown',
+                xeTimestamp: record.timestamp ? new Date(record.timestamp).toISOString() : undefined
+            }));
 
-            // Deduplicar usando multi-layer strategy
-            const existingIds = new Set(this.results.map(e => e.id));
-            let filteredNewEvents = newEvents.filter(e => !existingIds.has(e.id));
-
-            // 🎯 LAYER 2: Apply advanced deduplication using EventDeduplicator
-            const deduplicatedEvents: ProfilerEvent[] = [];
-            let duplicatesBySignature = 0;
-
-            for (const event of filteredNewEvents) {
-                // Check if it's an internal query that should be filtered
+            // Filter internal queries first
+            let filteredEvents = newEvents.filter(event => {
                 if (isInternalQuery(event.statement)) {
                     console.log('🔍 ADS: Internal query filtered:', {
                         eventName: event.eventName,
                         statement: event.statement.substring(0, 100)
                     });
-                    continue;
+                    return false;
                 }
+                return true;
+            });
 
-                // Check if already seen recently (time-windowed deduplication cache)
-                if (this.deduplicator.isDuplicate(event)) {
-                    duplicatesBySignature++;
-                    console.log('🔄 ADS: DUPLICATE DETECTED (signature match):', {
-                        eventName: event.eventName,
-                        statement: event.statement.substring(0, 100),
-                        timestamp: event.timestamp
-                    });
-                    continue;
-                }
+            // Use EventStorageService to handle deduplication and storage
+            const eventsAdded = this.eventStorage?.addEvents(filteredEvents) || 0;
 
-                deduplicatedEvents.push(event);
-            }
-
-            filteredNewEvents = deduplicatedEvents;
-
-            console.log('=== ADS MODE EVENT DEDUPLICATION ===');
+            console.log('=== ADS MODE EVENT DEDUPLICATION (EventRegistry) ===');
             console.log('Total events from query:', newEvents.length);
-            console.log('Already in results:', newEvents.length - filteredNewEvents.length - duplicatesBySignature);
-            console.log('Duplicate by signature:', duplicatesBySignature);
-            console.log('New events to add:', filteredNewEvents.length);
+            console.log('Internal queries filtered:', newEvents.length - filteredEvents.length);
+            console.log('New unique events added to registry:', eventsAdded);
+            console.log('Total events in registry:', this.eventStorage?.getAllEvents().length || 0);
 
-            this.results.unshift(...filteredNewEvents);
-
-            // Limitar resultados
-            const maxEvents = vscode.workspace.getConfiguration('sqlProfiler').get<number>('maxEvents') || 2000;
-            if (this.results.length > maxEvents) {
-                this.results = this.results.slice(0, maxEvents);
-            }
-
-            if (filteredNewEvents.length > 0) {
-                console.log(`✅ ADS mode: ${filteredNewEvents.length} new event(s) added`);
+            if (eventsAdded > 0) {
+                console.log(`✅ ADS mode: ${eventsAdded} new unique event(s) added to registry`);
+            } else if (filteredEvents.length > 0) {
+                console.log(`ℹ️ ADS mode: All ${filteredEvents.length} events were duplicates`);
             }
         } catch (error: any) {
             Logger.errorSilent('Error in collectResultsADS:', error);
@@ -1926,19 +1915,18 @@ export class SqlProfilerManager {
     }
 
     getResults(): ProfilerEvent[] {
-        console.log('=== GET RESULTS CALLED ===');
-        console.log('Results array length:', this.results.length);
-        console.log('isProfilering:', this.isProfilering);
-        console.log('First 3 results:', this.results.slice(0, 3).map(r => ({
-            timestamp: r.timestamp,
-            eventName: r.eventName,
-            statement: r.statement?.substring(0, 50) + '...'
+        // Return events from EventRegistry as ProfilerEvent format
+        const events = this.eventStorage?.getAllEvents() || [];
+        console.log('Results array length:', events.length);
+        console.log('First 3 results:', events.slice(0, 3).map(r => ({
+            id: r.id,
+            statement: r.statement.substring(0, 50)
         })));
-        return [...this.results];
+        return events as ProfilerEvent[];
     }
 
     clearResults(): void {
-        this.results = [];
+        this.eventStorage?.clear();
     }
 
     isRunning(): boolean {
@@ -3498,8 +3486,10 @@ ${this.formatRecommendedActions(results)}
         this.databaseTypeCache.clear();
         this.lastLogTime.clear();
         
+        // Dispose event storage
+        this.eventStorage?.dispose();
+        
         // Reset state
-        this.results = [];
         this.lastReadTimestamp = null;
         this.lastAzureTimestamp = null;
         this.detectedDatabaseType = null;
