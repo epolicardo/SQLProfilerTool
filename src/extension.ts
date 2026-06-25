@@ -16,55 +16,22 @@ export function activate(context: vscode.ExtensionContext) {
     Logger.initialize(context);
     Logger.info('SQL Server Profiler Tool extension is now active!');
 
-    // Application Insights Connection String
-    const aiConnectionString = 'InstrumentationKey=bbbe0a85-ac32-4bc3-bed1-aa51232a7843;IngestionEndpoint=https://brazilsouth-1.in.applicationinsights.azure.com/;LiveEndpoint=https://brazilsouth.livediagnostics.monitor.azure.com/;ApplicationId=ea1ee39c-7c34-4225-ae0a-1defcc009bc2';
+    // Application Insights Connection String (SqlServerProfilerInsights - East US 2)
+    const aiConnectionString = 'InstrumentationKey=bf680389-b4ba-4048-9a1f-f7ef3ce1ebb7;IngestionEndpoint=https://eastus2-3.in.applicationinsights.azure.com/;LiveEndpoint=https://eastus2.livediagnostics.monitor.azure.com/;ApplicationId=9bce0615-ce73-407b-aceb-db82d6797c5a';
 
-    // --- OpenTelemetry: inicialización ---
-    try {
-        const otelService = OpenTelemetryService.initialize(context, aiConnectionString);
-        
-        // Start a trace for extension activation
-        otelService.startActiveSpan('extension.activate', {
-            extensionVersion: context.extension.packageJSON.version,
-            vscodeVersion: vscode.version,
-            osPlatform: os.platform(),
-        }, (span) => {
-            Logger.info('OpenTelemetry initialized successfully');
-            otelService.endSpan(span);
-        });
-    } catch (err) {
-        Logger.error('Error initializing OpenTelemetry: ' + (err instanceof Error ? err.message : String(err)));
-    }
-
-    // --- TelemetryService: inicialización segura (mantenida para compatibilidad) ---
+    // --- Telemetry: direct HTTPS to App Insights REST API ---
     try {
         TelemetryService.initialize(context, aiConnectionString);
+        // Initialize OTel facade after TelemetryService so its delegated calls work
+        OpenTelemetryService.initialize(context, aiConnectionString);
 
-        // Capture system information
-        const systemInfo = {
-            // Operating System
-            osPlatform: os.platform(),          // 'win32', 'darwin', 'linux'
-            osType: os.type(),                  // 'Windows_NT', 'Darwin', 'Linux'
-            osRelease: os.release(),            // OS version
-            osArch: os.arch(),                  // 'x64', 'arm64', etc.
-
-            // VS Code Environment
-            vscodeVersion: vscode.version,      // VS Code version
-            vscodeLanguage: vscode.env.language, // UI language
-            vscodeRemoteName: vscode.env.remoteName || 'local', // Remote environment (SSH, WSL, etc.)
-            vscodeUiKind: vscode.env.uiKind === vscode.UIKind.Desktop ? 'desktop' : 'web',
-
-            // Extension Info
+        TelemetryService.getInstance()?.sendEvent('extensionActivated', {
+            osPlatform: os.platform(),
+            osArch: os.arch(),
+            vscodeVersion: vscode.version,
             extensionVersion: context.extension.packageJSON.version,
-
-            // Node.js Info
-            nodeVersion: process.version,       // Node.js version
-            nodeArch: process.arch              // Process architecture
-        };
-
-        TelemetryService.getInstance()?.sendEvent('extensionActivated', systemInfo);
-        Logger.info('Telemetry initialized successfully with Azure Application Insights');
-        Logger.info(`System Info: ${os.platform()} ${os.arch()}, VS Code ${vscode.version}, Node ${process.version}`);
+        });
+        Logger.info('Telemetry initialized (direct App Insights)');
     } catch (err) {
         Logger.error('Error initializing telemetry: ' + (err instanceof Error ? err.message : String(err)));
     }
@@ -928,8 +895,8 @@ export async function deactivate() {
             Logger.info('Extension deactivated successfully - all resources cleaned up');
         }
 
-        // Dispose telemetry service last
-        TelemetryService.getInstance()?.dispose();
+        // Flush and dispose telemetry last (awaited so final events are sent)
+        await TelemetryService.getInstance()?.dispose();
     } catch (error) {
         Logger.error('Error during extension deactivation:', error);
         // Asegurar que el error no impida la desactivación
