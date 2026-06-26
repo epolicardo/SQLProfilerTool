@@ -24,33 +24,87 @@ All temporary development documentation files have been consolidated into two co
    - Testing scenarios
    - Debugging tips
 
-### Files Removed from Root
+### Phase 1: Cleanup Repository Root
 **Total**: 34 markdown files consolidated
 
-### Files Preserved in Root
+**Removed from root** (34 files now documented in DEVELOPMENT-HISTORY.md):
+- APPINSIGHTS-KQL-QUERIES.md, AZURE-MONITOR-FIX.md, AZURE-SQL-FIXES-v0.3.0.md
+- COMPLETE-VERIFICATION-CHECKLIST.md, CRITICAL-FIX-COMPLETION-REPORT.md
+- DEBUGGING-NO-EVENTS.md, DEDUPLICATION-ANALYSIS.md, DEDUPLICATION-FIX-RELEASE-NOTES.md
+- DEDUPLICATION-INTEGRATION-COMPLETE.md, DUPLICATE-EVENT-ROOT-CAUSE-ANALYSIS.md
+- EXECUTIVE-SUMMARY-v0.5.1.md, FILTROS-NODE-MSSQL.md, FIX-EXPLANATION-COMPLETE.md
+- IMPLEMENTACION-COMPLETA.md, IMPLEMENTATION-SUMMARY.md, LATENCY-FIX-4-MINUTE-DELAY.md
+- MANUAL-TESTING-GUIDE.md, OPTIMIZATION-PHASE-1-SUMMARY.md, OPTIMIZATION-RESULTS.md
+- PARALLEL-EXECUTION-FIX-v0.5.1.md, PHASE-COMPLETE-DEDUPLICATION-v0.5.0.md
+- PUBLISH-GUIDE-v0.5.0.md, QUICK-REFERENCE.md, README-SOLUTION.md
+- RELEASE-NOTES-v0.3.0.md, SISTEMA-RECONEXION-AUTOMATICA.md
+- SOLUCION-ANTI-SPAM-NOTIFICACIONES.md, SOLUCION-AZURE-SQL-DIAGNOSTICOS.md
+- SOLUCION-BUCLE-INFINITO-AZURE.md, TELEMETRY-FIX-TRACES-GUIDE.md
+- TESTING-DEDUPLICATION-QUICK-GUIDE.md, TESTING-GUIDE-PARALLEL-FIX.md, WHY-7-UPDATES-EXPLANATION.md
+
+**Test/Debug files removed**: test-*.sql, diagnostic-*.sql, output.txt, compile_output.txt
+
+**Preserved in root**:
 - ✅ **README.md** - Main project documentation
 - ✅ **LICENSE** - Project license
 - ✅ **SQLProfilerTool.code-workspace** - Workspace configuration
 - ✅ **package.json**, **tsconfig.json**, **webpack.config.js** - Project configuration
 - ✅ **.github/**, **.vscode/**, **resources/**, **scripts/**, **src/** - Core project files
 
+### Phase 2: Cleanup Documentation/ Folder
+**Total**: 27 obsolete/redundant files consolidated
+
+**Spanish implementation files removed** (archived in git history):
+- ANTI-RECURSION-SYSTEM.md, CORRECCION-DESCONEXIONES-Y-DETECCION.md
+- CORRECCION-ERROR-ENCRYPT-BOOLEAN.md, CORRECCION-ERROR-SERVIDOR-FORMATO.md
+- CORRECCION-TIMEOUTS-AZURE-SQL.md, FASE-1-ESTADO-PERSISTENTE-COMPLETADO.md
+- IMPLEMENTACION-POOL-CONEXIONES.md, MEJORA-TOOLTIP-SQL-SIN-LAYOUT-CHANGE.md
+- MEJORAS-CAPTURA-STORED-PROCEDURES.md, MEJORAS-Y-SUGERENCIAS.md
+- NUEVA-FUNCIONALIDAD-EXPANDIBLE.md, SESSION-SUMMARY-v0.2.6.md
+- SOLUCION-SIMPLIFIED-CAPTURE.md, TELEMETRIA-IMPLEMENTACION-PASO-A-PASO.md
+
+**Obsolete technical solutions removed** (info consolidated in DEVELOPMENT-HISTORY.md):
+- AZURE-CONNECTION-STRING-CONVERTER.md, AZURE-ESOCKET-FIX-SUMMARY.md
+- COMPACT_DESIGN_SUMMARY.md, CSP-SOLUTION.md, DEBUGGING-UNKNOWN-VALUES.md
+- ENHANCED-FILTERS-UPDATE.md, ERROR-10054-SOLUTION.md, IMPLEMENTATION-COMPLETE.md
+- OPENTELEMETRY-IMPLEMENTATION.md, RELEASE-NOTES-v0.0.2.md, RELEASE-NOTES-v0.2.8.md
+- SECURITY-FIX-PASSWORD-LOGS.md, SIDEBAR-INTEGRATION.md, SQL-SERVER-EXTENSION-INTEGRATION.md
+- TIMEOUT-FIXES-SOLUTION.md
+
+**Core documentation preserved** (7 essential files):
+- ✅ **DEVELOPMENT-HISTORY.md** - Comprehensive 6-phase development history
+- ✅ **CODE-CHANGES-QUICK-REFERENCE.md** - Code-specific reference with snippets
+- ✅ **CHANGELOG.md** - User-facing release history
+- ✅ **OPENTELEMETRY-QUICKSTART.md** - OpenTelemetry setup guide
+- ✅ **AZURE-SQL-CONNECTION-GUIDE.md** - Azure SQL connection guide
+- ✅ **RELEASE-GUIDE.md** - Release process documentation
+
 ---
 
-## 📂 New Documentation Structure
+## 📂 Optimized Documentation Structure
 
 ```
 Documentation/
-├── DEVELOPMENT-HISTORY.md ✨ NEW
-│   └── Comprehensive development history (6 phases, 100+ sections)
+├── DEVELOPMENT-HISTORY.md ✨ MASTER
+│   └── Comprehensive 6-phase development history (all fixes documented)
 │
-├── CODE-CHANGES-QUICK-REFERENCE.md ✨ NEW
-│   └── Code-specific reference with snippets and configurations
+├── CODE-CHANGES-QUICK-REFERENCE.md ✨ MASTER  
+│   └── Code-specific reference with file locations and snippets
+│
+├── CLEANUP-SUMMARY.md ✨ NEW (this file)
+│   └── Complete cleanup record for team awareness
 │
 ├── CHANGELOG.md
-├── IMPLEMENTATION-COMPLETE.md
-├── OPENTELEMETRY-IMPLEMENTATION.md
+│   └── User-facing release history
+│
 ├── OPENTELEMETRY-QUICKSTART.md
-└── ... (other reference docs)
+│   └── Setup guide for OpenTelemetry integration
+│
+├── AZURE-SQL-CONNECTION-GUIDE.md
+│   └── Connection configuration for Azure SQL Database
+│
+└── RELEASE-GUIDE.md
+    └── Release process and procedures
 ```
 
 ---
