@@ -1,13 +1,16 @@
+// `tedious@15` (transitive via `mssql@9`) ships no type declarations, and the
+// current `@types/tedious` package is a stub that defers to those missing
+// bundled types. `@types/mssql` still references a few `tedious` types, so this
+// ambient module supplies just those. The extension never imports `tedious`
+// directly — it only uses the `mssql` pool/request API.
 declare module 'tedious' {
-    export interface Connection {
-        // Minimal interface for tedious Connection
-    }
+    export type Connection = Record<string, never>;
 
     export interface ConnectionOptions {
-        // Minimal interface for tedious ConnectionOptions
+        appName?: string;
+        encrypt?: boolean;
+        trustServerCertificate?: boolean;
     }
 
-    export interface ConnectionAuthentication {
-        // Minimal interface for tedious ConnectionAuthentication
-    }
+    export type ConnectionAuthentication = Record<string, never>;
 }

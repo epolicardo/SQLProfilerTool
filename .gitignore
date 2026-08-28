@@ -2,10 +2,13 @@
 # SQL Server Profiler Tool - VS Code Extension
 # ==============================================
 
-# Compiled output
+# Compiled / bundled output
 out/
 dist/
 *.vsix
+
+# Local dev notes (kept out of the repo)
+docs/dev/
 
 # Node.js dependencies
 node_modules/
@@ -125,3 +128,4 @@ coverage/
 # Build artifacts
 build/
 lib/
+graphify-out/

@@ -8,10 +8,10 @@ export class ProfilerWebviewProvider {
 
     public getWebviewContent(): string {
         const scriptUri = this.panel.webview.asWebviewUri(
-            vscode.Uri.joinPath(this.context.extensionUri, 'src', 'webview', 'profiler.js')
+            vscode.Uri.joinPath(this.context.extensionUri, 'media', 'profiler.js')
         );
         const styleUri = this.panel.webview.asWebviewUri(
-            vscode.Uri.joinPath(this.context.extensionUri, 'src', 'webview', 'profiler.css')
+            vscode.Uri.joinPath(this.context.extensionUri, 'media', 'profiler.css')
         );
 
         return `
@@ -20,7 +20,7 @@ export class ProfilerWebviewProvider {
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${this.panel.webview.cspSource} 'unsafe-inline'; script-src ${this.panel.webview.cspSource};">
+                <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${this.panel.webview.cspSource}; img-src ${this.panel.webview.cspSource}; font-src ${this.panel.webview.cspSource}; script-src ${this.panel.webview.cspSource}; connect-src 'none'; frame-src 'none'; base-uri 'none';">
                 <link rel="stylesheet" href="${styleUri}">
                 <title>SQL Server Profiler</title>
             </head>
@@ -77,7 +77,7 @@ export class ProfilerWebviewProvider {
                     </div>
                     
                     <!-- Connection Status Toast (only when needed) -->
-                    <div class="connection-toast" id="connectionStatus" style="display: none;">
+                    <div class="connection-toast" id="connectionStatus" hidden>
                         No connection selected
                     </div>
 

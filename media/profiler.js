@@ -290,10 +290,10 @@
                     <td>
                         <button class="expand-btn" id="expand-btn-${rowId}">▶</button>
                     </td>
-                    <td>${timestamp}</td>
-                    <td>${result.eventName || 'Unknown'}</td>
-                    <td>${result.databaseName || ''}</td>
-                    <td>${result.userName || ''}</td>
+                    <td>${escapeHtml(timestamp)}</td>
+                    <td>${escapeHtml(result.eventName || 'Unknown')}</td>
+                    <td>${escapeHtml(result.databaseName || '')}</td>
+                    <td>${escapeHtml(result.userName || '')}</td>
                     <td class="${durationClass}">${duration > 0 ? duration.toLocaleString() : ''}</td>
                     <td title="${escapeHtml(result.statement)}">${escapeHtml(truncateText(result.statement, 100))}</td>
                 </tr>
@@ -320,20 +320,20 @@
                 <h4>📊 Event Details</h4>
                 <div class="detail-grid">
                     <span class="detail-label">Timestamp:</span>
-                    <span class="detail-value">${timestamp}</span>
-                    
+                    <span class="detail-value">${escapeHtml(timestamp)}</span>
+
                     <span class="detail-label">Event Type:</span>
-                    <span class="detail-value">${result.eventName || 'Unknown'}</span>
-                    
+                    <span class="detail-value">${escapeHtml(result.eventName || 'Unknown')}</span>
+
                     <span class="detail-label">Database:</span>
-                    <span class="detail-value">${result.databaseName || 'N/A'}</span>
-                    
+                    <span class="detail-value">${escapeHtml(result.databaseName || 'N/A')}</span>
+
                     <span class="detail-label">User:</span>
-                    <span class="detail-value">${result.userName || 'N/A'}</span>
-                    
+                    <span class="detail-value">${escapeHtml(result.userName || 'N/A')}</span>
+
                     <span class="detail-label">Application:</span>
-                    <span class="detail-value">${result.applicationName || 'N/A'}</span>
-                    
+                    <span class="detail-value">${escapeHtml(result.applicationName || 'N/A')}</span>
+
                     <span class="detail-label">Duration:</span>
                     <span class="detail-value">${duration > 0 ? duration.toLocaleString() + ' ms' : 'N/A'}</span>
                 </div>
@@ -476,9 +476,12 @@
     }
 
     function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        return String(text ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     function debounce(func, wait) {
@@ -514,16 +517,16 @@
         if (message && message !== 'No connection selected') {
             connectionStatus.textContent = message;
             connectionStatus.className = `connection-toast ${type}`;
-            connectionStatus.style.display = 'block';
+            connectionStatus.hidden = false;
 
             // Auto-hide success messages after 3 seconds
             if (type === 'connected') {
                 setTimeout(() => {
-                    connectionStatus.style.display = 'none';
+                    connectionStatus.hidden = true;
                 }, 3000);
             }
         } else {
-            connectionStatus.style.display = 'none';
+            connectionStatus.hidden = true;
         }
     }
 

@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- Background circle -->
+  <circle cx="64" cy="64" r="60" fill="#0078D4" opacity="0.1"/>
+  
+  <!-- Database cylinder -->
+  <ellipse cx="64" cy="42" rx="28" ry="12" fill="#0078D4"/>
+  <rect x="36" y="42" width="56" height="38" fill="#0078D4"/>
+  <ellipse cx="64" cy="80" rx="28" ry="12" fill="#0078D4" opacity="0.7"/>
+  
+  <!-- Database side edge -->
+  <path d="M 36 42 Q 36 61 36 80 Q 36 92 64 92 Q 92 92 92 80 Q 92 61 92 42" 
+        stroke="#0078D4" stroke-width="1" fill="none"/>
+  
+  <!-- Analytics lines (profiler concept) -->
+  <line x1="48" y1="55" x2="80" y2="55" stroke="#00A4EF" stroke-width="2" stroke-linecap="round"/>
+  <line x1="48" y1="65" x2="75" y2="65" stroke="#00A4EF" stroke-width="2" stroke-linecap="round"/>
+  <line x1="48" y1="75" x2="78" y2="75" stroke="#00A4EF" stroke-width="2" stroke-linecap="round"/>
+  
+  <!-- Magnifying glass overlay (search/analyze) -->
+  <circle cx="100" cy="100" r="14" fill="none" stroke="#107C10" stroke-width="2"/>
+  <line x1="110" y1="110" x2="118" y2="118" stroke="#107C10" stroke-width="2" stroke-linecap="round"/>
+</svg>

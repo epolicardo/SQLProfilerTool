@@ -10,10 +10,11 @@ This is a Visual Studio Code extension that provides SQL Server profiling capabi
 - **UI**: Webview panels for results display
 
 ## Key Components
-- `extension.ts`: Main extension entry point
-- `src/profiler/`: Profiler logic and XE session management  
-- `src/webview/`: HTML/CSS/JS for result visualization
-- `src/database/`: SQL Server connection and query execution
+- `src/extension.ts`: Main extension entry point
+- `src/profiler/`: Profiler logic, XE session management, and SQL Server connection handling
+- `src/webview/`: Webview HTML provider (`ProfilerWebviewProvider.ts`)
+- `media/`: Webview client assets (`profiler.js`, `profiler.css`) shipped in the VSIX
+- `src/utils/`: Local diagnostic logger
 
 ## Development Guidelines
 - Follow VS Code extension best practices

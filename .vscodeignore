@@ -1,0 +1,14 @@
+# Ship only the bundled extension and its webview assets.
+# Everything is excluded by default, then the runtime files are added back.
+**
+
+!dist/extension.js
+!media/**
+!icon.png
+!README.md
+!CHANGELOG.md
+!LICENSE
+
+# Never ship source maps or sample/dev material even if a pattern above would catch it.
+dist/**/*.map
+media/**/*.map

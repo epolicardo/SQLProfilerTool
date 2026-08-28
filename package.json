@@ -2,14 +2,24 @@
     "name": "sql-server-profiler-tool",
     "displayName": "SQL Server Profiler Tool",
     "description": "SQL Server profiler extension using Extended Events for real-time query capture and analysis",
-    "version": "0.1.0",
+    "version": "0.6.0",
     "publisher": "epolicardo",
+    "license": "MIT",
+    "icon": "icon.png",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/epolicardo/SQLProfilerTool.git"
+    },
+    "homepage": "https://github.com/epolicardo/SQLProfilerTool#readme",
+    "bugs": {
+        "url": "https://github.com/epolicardo/SQLProfilerTool/issues"
+    },
     "engines": {
         "vscode": "^1.74.0"
     },
     "categories": [
         "Other",
-        "Debuggers"
+        "Visualization"
     ],
     "keywords": [
         "sql server",
@@ -19,7 +29,7 @@
         "performance"
     ],
     "activationEvents": [],
-    "main": "./out/extension.js",
+    "main": "./dist/extension.js",
     "contributes": {
         "commands": [
             {
@@ -111,16 +121,10 @@
         "configuration": {
             "title": "SQL Server Profiler Tool",
             "properties": {
-                "sqlProfiler.connectionString": {
-                    "type": "string",
-                    "default": "",
-                    "description": "SQL Server connection string",
-                    "scope": "resource"
-                },
                 "sqlProfiler.sessionName": {
                     "type": "string",
                     "default": "VSCodeProfilerSession",
-                    "description": "Extended Events session name"
+                    "description": "Prefix for profiler-owned Extended Events session names"
                 },
                 "sqlProfiler.autoStart": {
                     "type": "boolean",
@@ -130,24 +134,38 @@
                 "sqlProfiler.maxEvents": {
                     "type": "number",
                     "default": 1000,
-                    "description": "Maximum number of events to capture"
+                    "minimum": 1,
+                    "maximum": 10000,
+                    "description": "Maximum number of events retained in memory"
                 },
                 "sqlProfiler.selectedConnection": {
                     "type": "string",
                     "default": "",
                     "description": "Name of the selected mssql connection profile for profiling"
+                },
+                "sqlProfiler.verboseLogging": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Write detailed diagnostic logs to the 'SQL Server Profiler' output channel. Enable this before reproducing an issue for a bug report. These logs stay on your machine and are never transmitted."
+                },
+                "sqlProfiler.connectionString": {
+                    "type": "string",
+                    "default": "",
+                    "markdownDeprecationMessage": "Deprecated: connection strings are now stored in VS Code SecretStorage. Any value set here is migrated to SecretStorage on first use and then cleared.",
+                    "description": "Deprecated legacy connection string. Use an mssql connection profile instead."
                 }
             }
         }
     },
     "scripts": {
-        "vscode:prepublish": "npm run compile",
-        "compile": "tsc -p ./",
-        "watch": "tsc -watch -p ./",
-        "pretest": "npm run compile && npm run lint",
+        "vscode:prepublish": "npm run check-types && npm run lint && npm run bundle -- --minify",
+        "bundle": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node16 --external:vscode --outfile=dist/extension.js --sourcemap",
+        "compile": "npm run check-types && npm run bundle",
+        "check-types": "tsc -p ./ --noEmit",
+        "watch": "npm run bundle -- --watch",
         "lint": "eslint src --ext ts",
         "test": "node ./out/test/runTest.js",
-        "package": "vsce package"
+        "package": "npm run check-types && npm run lint && npm run bundle -- --minify && vsce package --no-dependencies"
     },
     "devDependencies": {
         "@types/mssql": "^9.1.8",
@@ -156,8 +174,9 @@
         "@types/vscode": "^1.74.0",
         "@typescript-eslint/eslint-plugin": "^5.45.0",
         "@typescript-eslint/parser": "^5.45.0",
+        "@vscode/vsce": "^3.9.2",
+        "esbuild": "^0.24.0",
         "eslint": "^8.28.0",
-        "glob": "^8.0.3",
         "typescript": "^4.9.4"
     },
     "dependencies": {

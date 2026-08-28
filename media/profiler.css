@@ -768,6 +768,10 @@ body {
     margin-bottom: 8px;
 }
 
+.connection-toast[hidden] {
+    display: none;
+}
+
 /* Responsive adjustments for small screens */
 @media (max-width: 768px) {
     .compact-toolbar {

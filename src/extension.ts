@@ -11,12 +11,6 @@ export function activate(context: vscode.ExtensionContext) {
     Logger.initialize(context);
     Logger.info('SQL Server Profiler Tool extension is now active!');
 
-    // ⚠️ TEMPORAL WARNING
-    Logger.warn('=== TEMPORAL DEBUG MODE ENABLED ===');
-    Logger.warn('PASSWORDS WILL BE LOGGED TO CONSOLE');
-    Logger.warn('REMEMBER TO REMOVE THIS IN PRODUCTION');
-    Logger.warn('=======================================');
-
     // Initialize the profiler manager
     profilerManager = new SqlProfilerManager(context);
 
@@ -145,7 +139,7 @@ function registerCommands(context: vscode.ExtensionContext) {
                         enableScripts: true,
                         retainContextWhenHidden: true,
                         localResourceRoots: [
-                            vscode.Uri.joinPath(context.extensionUri, 'src', 'webview')
+                            vscode.Uri.joinPath(context.extensionUri, 'media')
                         ]
                     }
                 );
@@ -164,6 +158,11 @@ function registerCommands(context: vscode.ExtensionContext) {
                 currentPanel.onDidDispose(
                     () => {
                         currentPanel = undefined;
+                        if (profilerManager) {
+                            void profilerManager.stopProfiling().catch(error => {
+                                Logger.error('Failed to stop profiling after the profiler panel closed', error);
+                            });
+                        }
                     },
                     null,
                     context.subscriptions
@@ -181,23 +180,6 @@ function registerCommands(context: vscode.ExtensionContext) {
             }
 
             try {
-                const config = vscode.workspace.getConfiguration('sqlProfiler');
-                const connectionString = config.get<string>('connectionString');
-
-                if (!connectionString) {
-                    const inputConnectionString = await vscode.window.showInputBox({
-                        prompt: 'Enter SQL Server connection string',
-                        placeHolder: 'Server=localhost;Database=master;Integrated Security=true;',
-                        ignoreFocusOut: true
-                    });
-
-                    if (!inputConnectionString) {
-                        return;
-                    }
-
-                    await config.update('connectionString', inputConnectionString, vscode.ConfigurationTarget.Workspace);
-                }
-
                 await profilerManager.startProfiling();
                 vscode.window.showInformationMessage('SQL Server profiling started');
 
@@ -256,8 +238,14 @@ function registerCommands(context: vscode.ExtensionContext) {
     );
 }
 
-function handleWebviewMessage(message: any) {
-    switch (message.command) {
+function handleWebviewMessage(message: unknown) {
+    if (typeof message !== 'object' || message === null) {
+        return;
+    }
+    const msg = message as Record<string, unknown>;
+    const command = typeof msg.command === 'string' ? msg.command : '';
+
+    switch (command) {
         case 'startProfiling':
             startProfilingFromWebview();
             break;
@@ -283,11 +271,26 @@ function handleWebviewMessage(message: any) {
             refreshConnections();
             break;
         case 'setConnection':
-            setConnection(message.connectionName);
+            if (typeof msg.connectionName === 'string') {
+                setConnection(msg.connectionName);
+            }
             break;
-        case 'openSqlInNewTab':
-            openSqlInNewTab(message.sql, message.metadata);
+        case 'openSqlInNewTab': {
+            const sql = typeof msg.sql === 'string' ? msg.sql : '';
+            if (!sql || sql.length > 5_000_000) {
+                return;
+            }
+            const rawMeta = (typeof msg.metadata === 'object' && msg.metadata !== null)
+                ? msg.metadata as Record<string, unknown>
+                : {};
+            openSqlInNewTab(sql, {
+                timestamp: String(rawMeta.timestamp ?? ''),
+                eventName: String(rawMeta.eventName ?? ''),
+                database: String(rawMeta.database ?? ''),
+                user: String(rawMeta.user ?? '')
+            });
             break;
+        }
     }
 }
 
@@ -302,6 +305,15 @@ async function exportResults() {
         return;
     }
 
+    const confirm = await vscode.window.showWarningMessage(
+        `Export ${results.length} captured event(s)? The file will contain raw SQL text, database names and user names in clear text.`,
+        { modal: true },
+        'Export'
+    );
+    if (confirm !== 'Export') {
+        return;
+    }
+
     const uri = await vscode.window.showSaveDialog({
         defaultUri: vscode.Uri.file('profiler-results.json'),
         filters: {
@@ -311,9 +323,13 @@ async function exportResults() {
     });
 
     if (uri) {
-        const content = JSON.stringify(results, null, 2);
-        await vscode.workspace.fs.writeFile(uri, Buffer.from(content));
-        vscode.window.showInformationMessage(`Results exported to ${uri.fsPath}`);
+        try {
+            const content = JSON.stringify(results, null, 2);
+            await vscode.workspace.fs.writeFile(uri, Buffer.from(content));
+            vscode.window.showInformationMessage(`Results exported to ${uri.fsPath}`);
+        } catch (error) {
+            Logger.error('Failed to export results', error);
+        }
     }
 }
 
@@ -348,7 +364,14 @@ async function setConnection(connectionName: string) {
     }
 }
 
-async function openSqlInNewTab(sqlContent: string, metadata: any) {
+interface SqlTabMetadata {
+    timestamp: string;
+    eventName: string;
+    database: string;
+    user: string;
+}
+
+async function openSqlInNewTab(sqlContent: string, metadata: SqlTabMetadata) {
     try {
         // Create a new untitled document with SQL content
         const doc = await vscode.workspace.openTextDocument({
@@ -362,22 +385,24 @@ async function openSqlInNewTab(sqlContent: string, metadata: any) {
             preview: false
         });
 
-        // Optionally add metadata as comments at the top
-        if (metadata) {
-            const metadataComments = [
-                `-- SQL Statement from Profiler`,
-                `-- Timestamp: ${new Date(metadata.timestamp).toLocaleString()}`,
-                `-- Event Type: ${metadata.eventName || 'Unknown'}`,
-                `-- Database: ${metadata.database || 'Unknown'}`,
-                `-- User: ${metadata.user || 'Unknown'}`,
-                `-- `,
-                ``
-            ].join('\n');
+        // Add metadata as SQL comments at the top
+        const parsedTimestamp = metadata.timestamp ? new Date(metadata.timestamp) : undefined;
+        const timestampText = parsedTimestamp && !isNaN(parsedTimestamp.getTime())
+            ? parsedTimestamp.toLocaleString()
+            : 'Unknown';
+        const metadataComments = [
+            `-- SQL statement from SQL Server Profiler`,
+            `-- Timestamp: ${timestampText}`,
+            `-- Event type: ${metadata.eventName || 'Unknown'}`,
+            `-- Database: ${metadata.database || 'Unknown'}`,
+            `-- User: ${metadata.user || 'Unknown'}`,
+            `--`,
+            ``
+        ].join('\n');
 
-            await editor.edit(editBuilder => {
-                editBuilder.insert(new vscode.Position(0, 0), metadataComments);
-            });
-        }
+        await editor.edit(editBuilder => {
+            editBuilder.insert(new vscode.Position(0, 0), metadataComments);
+        });
 
         vscode.window.showInformationMessage('SQL statement opened in new tab');
     } catch (error) {
@@ -442,8 +467,8 @@ function clearResultsFromWebview() {
     vscode.window.showInformationMessage('Profiler results cleared');
 }
 
-export function deactivate() {
+export async function deactivate(): Promise<void> {
     if (profilerManager) {
-        profilerManager.dispose();
+        await profilerManager.dispose();
     }
 }
